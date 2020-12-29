@@ -43,7 +43,7 @@ class DataAnalyzer:
         # Layout
         columns = ("Title", "Brightness", "SNR", "StdDev from SNR", "StdDev", "StdDev/StdDev from SNR")
 
-        self.datasheet = ttk.Treeview(self.window, columns=columns, selectmode='browse', show="headings")
+        self.datasheet = ttk.Treeview(self.window, columns=columns, show="headings")
 
         for col in columns:
             self.datasheet.heading(col, text=col, command=lambda _col=col: self.sort_by_column(_col, False))
@@ -67,7 +67,7 @@ class DataAnalyzer:
 
         for func in self.functions:
             b = tk.Button(master=self.window, command=func[0], text=func[1])
-            b.pack(side="left")
+            b.pack(side=tk.LEFT)
 
 
         # Event handling
@@ -93,19 +93,19 @@ class DataAnalyzer:
         return sample.signal, sample.snr, sample.get_stddev_from_SNR(), sample.get_stddev_from_numbers(), sample.get_stddev_from_numbers() / sample.get_stddev_from_SNR()
 
     def f_show_crossection(self):
-        data = self.data[self.datasheet.focus()]
-        title = self.datasheet.item(self.datasheet.focus())["text"]
-        self.open_windows.append(GraphWindow(self.window, data, "Show Crosssection", title))
+        samples = [self.data[iid] for iid in self.datasheet.selection()]
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+        self.open_windows.append(GraphWindow(self.window, samples, "Show Crosssection", title))
 
     def f_show_flattened_line(self):
-        data = self.data[self.datasheet.focus()]
-        title = self.datasheet.item(self.datasheet.focus())["text"]
-        self.open_windows.append(GraphWindow(self.window, data, "t-S-Graph", title))
+        samples = [self.data[iid] for iid in self.datasheet.selection()]
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+        self.open_windows.append(GraphWindow(self.window, samples, "t-S-Graph", title))
 
     def f_show_SNR_StdDev_graph(self):
-        data = self.data[self.datasheet.focus()]
-        title = self.datasheet.item(self.datasheet.focus())["text"]
-        self.open_windows.append(GraphWindow(self.window, data, "Compare SNR to StdDev", title))
+        samples = [self.data[iid] for iid in self.datasheet.selection()]
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+        self.open_windows.append(GraphWindow(self.window, samples, "Compare SNR to StdDev", title))
 
     # Event Handling
 
@@ -123,53 +123,79 @@ class DataAnalyzer:
 
 
 class GraphWindow:
-    def __init__(self, parent, sample, graph_type, title):
-        self.sample = sample
+    def __init__(self, parent, samples, graph_type, title):
+        self.samples = samples
+        self.title = title
         self.graph_type = graph_type
 
         self.parent = parent
         self.window = tk.Toplevel()
         self.window.withdraw()
 
-        self.window.title(graph_type + ": " + title)
+        self.window.title(graph_type + ": " + ", ".join(title))
         self.window.geometry = "800x600"
+
+        self.normalize = tk.BooleanVar()
+        self.interval = tk.IntVar()
 
         self.canvas = None
 
         self.f = Figure(dpi=200)
 
         if graph_type == "t-S-Graph" or graph_type == "Compare SNR to StdDev":
-            self.slider = tk.Scale(self.window, from_=1, to=len(sample.data[0]) // 2, orient=tk.HORIZONTAL, label="Interval for moving average: ")
-            self.slider.bind("<ButtonRelease-1>", self._slider_release_event)
+            self.slider = tk.Scale(self.window, from_=1, to=max(len(sample.data[0]) for sample in samples) // 2, orient=tk.HORIZONTAL, variable=self.interval, label="Interval for moving average: ")
+            self.slider.bind("<ButtonRelease-1>", lambda x: self._redraw())
             self.slider.pack(fill=tk.BOTH, expand=True)
 
-        self.draw_figure(self.f, sample, graph_type)
+        self.normalize_check = tk.Checkbutton(self.window, variable=self.normalize, offvalue=False, onvalue=True, text="Normalize", command=self._redraw)
+
+        self.normalize_check.pack(side=tk.LEFT)
+
+        self.draw_figure(self.f, samples, graph_type)
 
         self.window.deiconify()
 
 
-    def draw_figure(self, f, sample, graph_type, interval=1):
+    def draw_figure(self, f, samples, graph_type, interval=1, normalize=False):
         if graph_type == "t-S-Graph":
-            data = sample.get_flattened_moving_average(interval)
-            axis_x = [i for i in range(interval, interval + len(data))]
+            data = [sample.get_flattened_moving_average(interval) for sample in samples]
+            axis_x = [i for i in range(interval, interval + max(map(len, data)))]
 
             f.clear()
 
             a = f.add_subplot(111)
             a.set_ylabel("ADUs")
             a.set_xlabel("Pixel from Start")
-            a.plot(axis_x, data)
+
+            for d, t in zip(data, self.title):
+                if normalize: d = d / np.mean(d)
+                a.plot(axis_x, d, label=t)
+
+            a.legend()
 
         elif graph_type == "Show Crosssection":
-            data = sample.get_crosssection()
+            data = [sample.get_crosssection() for sample in samples]
+
+            f.clear()
+
             a = f.add_subplot(111)
+
             a.set_ylabel("ADUs")
             a.set_xlabel("Pixel from Centre")
-            a.plot(np.array([i for i in range(len(data))]) - list(sample.get_crosssection()).index(max(sample.get_crosssection())), data)
 
-        elif graph_type == "Compare SNR to StdDev":
-            data = sample.get_flattened_moving_average(interval)
-            axis_x = [i for i in range(interval, interval + len(data))]
+            for d, t in zip(data, self.title):
+                if normalize: d = d / np.max(d)
+                offset = list(d).index(max(d))
+                a.plot(np.array([i for i in range(len(d))]) - offset, d, label=t)
+
+            a.legend()
+
+        else:
+            raise ValueError
+
+        """elif graph_type == "Compare SNR to StdDev":
+            data = [sample.get_flattened_moving_average(interval) for sample in samples]
+            axis_x = [i for i in range(interval, interval + max(map(len, data)))]
 
             avg = sample.get_signal_per_pix_avg()
             stddev_theoretical = sample.get_moving_stddev_from_SNR(interval)
@@ -183,10 +209,7 @@ class GraphWindow:
             a.fill_between(axis_x, avg - stddev_theoretical, avg + stddev_theoretical, alpha=0.5, label="mean +- mean/SNR")
             a.fill_between(axis_x, avg - stddev_numerical, avg + stddev_numerical, alpha=0.25, label="mean +- StdDev")
             a.plot(axis_x, data)
-            a.legend()
-
-        else:
-            raise ValueError
+            a.legend()"""
 
         if self.canvas:
             self.canvas.get_tk_widget().destroy()
@@ -194,8 +217,5 @@ class GraphWindow:
         self.canvas = FigureCanvasTkAgg(self.f, self.window)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    def _redraw(self, val):
-        self.draw_figure(self.f, self.sample, self.graph_type, interval=int(val))
-
-    def _slider_release_event(self, event):
-        self._redraw(self.slider.get())
+    def _redraw(self):
+        self.draw_figure(self.f, self.samples, self.graph_type, interval=self.interval.get(), normalize=self.normalize.get())
