@@ -1,7 +1,10 @@
 import tkinter as tk
 import time
-from tkinter import ttk
+from tkinter import ttk, simpledialog, filedialog
 import numpy as np
+
+import pickle
+
 import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
@@ -12,7 +15,8 @@ matplotlib.use("TkAgg")
 
 class DataAnalyzer:
     def __init__(self, parent):
-        self.parent = parent
+        self.parent_app = parent
+        self.parent = parent.root
         self.window = tk.Toplevel()
         self.window.withdraw()
 
@@ -41,7 +45,7 @@ class DataAnalyzer:
         self.window.config(menu=self.menubar)
 
         # Layout
-        columns = ("Title", "Brightness", "SNR", "StdDev from SNR", "StdDev", "StdDev/StdDev from SNR")
+        columns = ("Title", "Brightness", "SNR", "Normalized StdDev")
 
         self.datasheet = ttk.Treeview(self.window, columns=columns, show="headings")
 
@@ -63,7 +67,11 @@ class DataAnalyzer:
         # Buttons to get detailed info: (function_name, "Button Title")
         self.functions = ((self.f_show_crossection, "Show Crosssection"),
                           (self.f_show_flattened_line, "t-S-Graph"),
-                          (self.f_show_SNR_StdDev_graph, "Compare SNR to StdDev"))
+                          (self.f_rename_sample, "Rename Sample"),
+                          (self.f_delete_selected, "Delete Selected"),
+                          (self.f_delete_all, "Delete All"),
+                          (self.f_open, "Open Measurements"),
+                          (self.f_save_selected, "Save Measurements"))
 
         for func in self.functions:
             b = tk.Button(master=self.window, command=func[0], text=func[1])
@@ -84,13 +92,15 @@ class DataAnalyzer:
     def close_window(self):
         self.window.withdraw()
 
-    def add_sample(self, sample):
-        self.sample_count += 1
-        key = self.datasheet.insert("", "end", values=(f"Measurement {self.sample_count}", *self.get_sample_values(sample)))
+    def add_sample(self, sample, title=""):
+        if not title:
+            self.sample_count += 1
+            title = f"Measurement {self.sample_count}"
+        key = self.datasheet.insert("", "end", values=(title, *self.get_sample_values(sample)))
         self.data[key] = sample
 
     def get_sample_values(self, sample):
-        return sample.signal, sample.snr, sample.get_stddev_from_SNR(), sample.get_stddev_from_numbers(), sample.get_stddev_from_numbers() / sample.get_stddev_from_SNR()
+        return sample.signal, sample.snr, np.std(sample.get_flattened_line() / np.mean(sample.get_flattened_line()))
 
     def f_show_crossection(self):
         samples = [self.data[iid] for iid in self.datasheet.selection()]
@@ -107,10 +117,62 @@ class DataAnalyzer:
         title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
         self.open_windows.append(GraphWindow(self.window, samples, "Compare SNR to StdDev", title))
 
+    def f_rename_sample(self):
+        s = self.datasheet.focus()
+        if s:
+            new_name = ""
+            while not new_name or new_name in [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.get_children()]:
+                new_name = tk.simpledialog.askstring(f"Rename {self.datasheet.item(s)['values'][0]}", "Enter new title (must be unique)")
+            v = self.datasheet.item(s)["values"]
+            v[0] = new_name
+            self.datasheet.item(s, values=v)
+
+    def f_delete_selected(self):
+        samples = [iid for iid in self.datasheet.selection()]
+        self.datasheet.delete(*samples)
+
+    def f_delete_all(self):
+        self.datasheet.delete(*self.datasheet.get_children())
+
+    def f_open(self):
+        initial_dir = "/"
+        if "directory" in self.parent_app.args:
+            initial_dir = self.parent_app.args["directory"]
+        file = tk.filedialog.askopenfilename(defaultextension=".pkl", initialdir=initial_dir)
+
+        with open(file, "rb") as f:
+            samples = pickle.load(f)
+
+        for s in samples:
+            title = s
+            if s.startswith("Measurement"):
+                title = ""
+            if s in [self.datasheet.item(child)["values"][0] for child in self.datasheet.get_children()]:
+                title = title + "_1"
+            self.add_sample(samples[s], title=title)
+
+    def f_save_selected(self):       # Uses pickle for now, TODO: change to more accessible format, maybe json or csv
+        initial_dir = "/"
+        if "directory" in self.parent_app.args:
+            initial_dir = self.parent_app.args["directory"]
+        file = tk.filedialog.asksaveasfilename(defaultextension=".pkl", initialdir=initial_dir)
+
+        samples = {}
+
+        for child in self.datasheet.get_children():
+            samples[self.datasheet.item(child)["values"][0]] = self.data[child]
+
+        with open(file, "wb") as f:
+            pickle.dump(samples, f)
+
     # Event Handling
 
     def sort_by_column(self, col, reverse):
-        l = [(self.datasheet.set(k, col), k) for k in self.datasheet.get_children("")]
+        try:
+            l = [(float(self.datasheet.set(k, col)), k) for k in self.datasheet.get_children("")]
+        except ValueError:
+            l = [(self.datasheet.set(k, col), k) for k in self.datasheet.get_children("")]
+
         l.sort(reverse=reverse)
 
         for index, (val, k) in enumerate(l):
@@ -155,7 +217,6 @@ class GraphWindow:
 
         self.window.deiconify()
 
-
     def draw_figure(self, f, samples, graph_type, interval=1, normalize=False):
         if graph_type == "t-S-Graph":
             data = [sample.get_flattened_moving_average(interval) for sample in samples]
@@ -192,24 +253,6 @@ class GraphWindow:
 
         else:
             raise ValueError
-
-        """elif graph_type == "Compare SNR to StdDev":
-            data = [sample.get_flattened_moving_average(interval) for sample in samples]
-            axis_x = [i for i in range(interval, interval + max(map(len, data)))]
-
-            avg = sample.get_signal_per_pix_avg()
-            stddev_theoretical = sample.get_moving_stddev_from_SNR(interval)
-            stddev_numerical = sample.get_moving_stddev_from_numbers(interval)
-
-            f.clear()
-
-            a = f.add_subplot(111)
-            a.set_ylabel("ADUs")
-            a.set_xlabel("Pixel from Start")
-            a.fill_between(axis_x, avg - stddev_theoretical, avg + stddev_theoretical, alpha=0.5, label="mean +- mean/SNR")
-            a.fill_between(axis_x, avg - stddev_numerical, avg + stddev_numerical, alpha=0.25, label="mean +- StdDev")
-            a.plot(axis_x, data)
-            a.legend()"""
 
         if self.canvas:
             self.canvas.get_tk_widget().destroy()

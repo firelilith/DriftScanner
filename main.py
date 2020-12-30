@@ -17,7 +17,7 @@ class App:
         self.root = tk.Tk()
         self.root.title("DriftScanner")
 
-        self.analyse_window = DataAnalyzer(self.root)
+        self.analyse_window = DataAnalyzer(self)
 
         self._init_vars()
         self._init_menu()
