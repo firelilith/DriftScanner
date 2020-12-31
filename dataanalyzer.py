@@ -1,14 +1,12 @@
 import tkinter as tk
-import time
 from tkinter import ttk, simpledialog, filedialog
 import numpy as np
 
-import pickle
+import json
 
 import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
-import matplotlib.pyplot as pyplot
 from datasample import DataSample
 matplotlib.use("TkAgg")
 
@@ -31,6 +29,7 @@ class DataAnalyzer:
         self.open_windows = []
 
         # File Menubar
+        """
 
         self.menubar = tk.Menu(self.window)
 
@@ -43,8 +42,25 @@ class DataAnalyzer:
         self.menubar.add_cascade(label="File", menu=self.menubar_file)
 
         self.window.config(menu=self.menubar)
+        """
 
         # Layout
+
+        # Buttons to get detailed info: (function_name, "Button Title")
+        self.file_functions = ((self.f_rename_sample, "Rename Sample"),
+                               (self.f_delete_selected, "Delete Selected"),
+                               (self.f_delete_all, "Delete All"),
+                               (self.f_open, "Open Measurements"),
+                               (self.f_save_selected, "Save Measurements"))
+
+        self.display_functions = ((self.f_show_crossection, "Show Crosssection"),
+                                  (self.f_show_flattened_line, "t-S-Graph"))
+        self.top_frame = tk.Frame(master=self.window)
+        self.top_frame.pack(expand=False, fill=tk.X)
+        for func in self.file_functions:
+            b = tk.Button(master=self.top_frame, command=func[0], text=func[1])
+            b.pack(side=tk.LEFT)
+
         columns = ("Title", "Brightness", "SNR", "Normalized StdDev")
 
         self.datasheet = ttk.Treeview(self.window, columns=columns, show="headings")
@@ -55,7 +71,7 @@ class DataAnalyzer:
         for h in columns:
             self.datasheet.heading(h, text=h)
 
-        self.datasheet.pack(fill="both", expand=True, side="top")
+        self.datasheet.pack(fill="both", expand=True, side=tk.TOP)
 
         self.scrollbar = ttk.Scrollbar(self.datasheet)
         self.scrollbar.config(command=self.datasheet.yview)
@@ -64,17 +80,10 @@ class DataAnalyzer:
 
         self.scrollbar.pack(side="right", fill="y")
 
-        # Buttons to get detailed info: (function_name, "Button Title")
-        self.functions = ((self.f_show_crossection, "Show Crosssection"),
-                          (self.f_show_flattened_line, "t-S-Graph"),
-                          (self.f_rename_sample, "Rename Sample"),
-                          (self.f_delete_selected, "Delete Selected"),
-                          (self.f_delete_all, "Delete All"),
-                          (self.f_open, "Open Measurements"),
-                          (self.f_save_selected, "Save Measurements"))
-
-        for func in self.functions:
-            b = tk.Button(master=self.window, command=func[0], text=func[1])
+        self.bottom_frame = tk.Frame(master=self.window)
+        self.bottom_frame.pack(expand=False, fill=tk.X)
+        for func in self.display_functions:
+            b = tk.Button(master=self.bottom_frame, command=func[0], text=func[1])
             b.pack(side=tk.LEFT)
 
 
@@ -83,12 +92,6 @@ class DataAnalyzer:
         self.window.protocol("WM_DELETE_WINDOW", self.on_closing)
 
 
-    def open_file(self):
-        pass
-
-    def save_file(self):
-        pass
-
     def close_window(self):
         self.window.withdraw()
 
@@ -96,6 +99,7 @@ class DataAnalyzer:
         if not title:
             self.sample_count += 1
             title = f"Measurement {self.sample_count}"
+        sample.title = title
         key = self.datasheet.insert("", "end", values=(title, *self.get_sample_values(sample)))
         self.data[key] = sample
 
@@ -125,6 +129,7 @@ class DataAnalyzer:
                 new_name = tk.simpledialog.askstring(f"Rename {self.datasheet.item(s)['values'][0]}", "Enter new title (must be unique)")
             v = self.datasheet.item(s)["values"]
             v[0] = new_name
+            self.data[s].title = new_name
             self.datasheet.item(s, values=v)
 
     def f_delete_selected(self):
@@ -138,10 +143,10 @@ class DataAnalyzer:
         initial_dir = "/"
         if "directory" in self.parent_app.args:
             initial_dir = self.parent_app.args["directory"]
-        file = tk.filedialog.askopenfilename(defaultextension=".pkl", initialdir=initial_dir)
+        file = tk.filedialog.askopenfilename(defaultextension=".json", initialdir=initial_dir)
 
-        with open(file, "rb") as f:
-            samples = pickle.load(f)
+        with open(file, "r") as f:
+            samples = json.load(f)
 
         for s in samples:
             title = s
@@ -149,21 +154,22 @@ class DataAnalyzer:
                 title = ""
             if s in [self.datasheet.item(child)["values"][0] for child in self.datasheet.get_children()]:
                 title = title + "_1"
-            self.add_sample(samples[s], title=title)
+
+            self.add_sample(DataSample.build_from_json(samples[s]))
 
     def f_save_selected(self):       # Uses pickle for now, TODO: change to more accessible format, maybe json or csv
         initial_dir = "/"
         if "directory" in self.parent_app.args:
             initial_dir = self.parent_app.args["directory"]
-        file = tk.filedialog.asksaveasfilename(defaultextension=".pkl", initialdir=initial_dir)
+        file = tk.filedialog.asksaveasfilename(defaultextension=".json", initialdir=initial_dir)
 
         samples = {}
 
         for child in self.datasheet.get_children():
-            samples[self.datasheet.item(child)["values"][0]] = self.data[child]
+            samples[self.datasheet.item(child)["values"][0]] = self.data[child].get_json()
 
-        with open(file, "wb") as f:
-            pickle.dump(samples, f)
+        with open(file, "w") as f:
+            json.dump(samples, f)
 
     # Event Handling
 

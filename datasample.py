@@ -2,7 +2,7 @@ import numpy as np
 
 
 class DataSample:
-    def __init__(self, data, time_per_pix, background1, background2, readout_noise=0):
+    def __init__(self, data, time_per_pix, background1, background2, title="", readout_noise=0):
         """DataSample(data, time_per_pix, background, background2, readout_noise)
         Param:
         data = 2d numpy array-like object: drift data
@@ -14,6 +14,8 @@ class DataSample:
         self.background2 = background2
         self.time_per_pix = time_per_pix
         self.readout_dev = readout_noise
+
+        self.title = title
 
         self.fwhm = 0
 
@@ -27,6 +29,28 @@ class DataSample:
         # print(self.background1, self.background2, self._background_avg())
         # print(self.data_raw, self.data)
         # print(self.signal_raw, self.signal, self.snr)
+
+    def get_json(self):
+        data = dict()
+        data["title"] = self.title
+        data["raw_data"] = list(map(lambda x: list(map(float, x)), list(self.data_raw)))
+        data["background1"] = list(map(lambda x: list(map(float, x)), list(self.background1)))
+        data["background2"] = list(map(lambda x: list(map(float, x)), list(self.background2)))
+        data["time_per_pix"] = self.time_per_pix
+        data["readout_noise"] = self.readout_dev
+
+        return data
+
+    @classmethod
+    def build_from_json(cls, json):
+        title = json["title"]
+        data = np.array(json["raw_data"])
+        background1 = np.array(json["background1"])
+        background2 = np.array(json["background2"])
+        time_per_pix = json["time_per_pix"]
+        readout_noise = json["readout_noise"]
+
+        return DataSample(data, time_per_pix, background1, background2, title=title, readout_noise=readout_noise)
 
     def _adjust_bounds(self, start, stop):
         if start > stop:

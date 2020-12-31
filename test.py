@@ -1,4 +1,4 @@
-import tkinter as tk
+"""import tkinter as tk
 from tkinter.ttk import Treeview
 import time
 
@@ -10,4 +10,4 @@ tree.pack()
 for i in range(5):
     tree.insert("", "end", values=(i, i**2))
 
-window.mainloop()
+window.mainloop()"""
