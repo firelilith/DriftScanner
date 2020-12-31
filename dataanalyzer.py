@@ -138,6 +138,9 @@ class DataAnalyzer:
 
     def f_delete_all(self):
         self.datasheet.delete(*self.datasheet.get_children())
+        self.parent_app.graphics_clear_all()
+
+        [self.parent_app.graphics_clear_label(key) for key in self.parent_app.image_labels if not key.startswith("Custom")]
 
     def f_open(self):
         initial_dir = "/"
@@ -161,7 +164,10 @@ class DataAnalyzer:
         initial_dir = "/"
         if "directory" in self.parent_app.args:
             initial_dir = self.parent_app.args["directory"]
-        file = tk.filedialog.asksaveasfilename(defaultextension=".json", initialdir=initial_dir)
+        file = tk.filedialog.asksaveasfilename(defaultextension=".json", initialdir=initial_dir).strip()
+
+        if not file.endswith(".json"):
+            file += ".json"
 
         samples = {}
 

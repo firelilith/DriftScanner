@@ -98,7 +98,15 @@ class DataSample:
 
         signal = self._signal_background(start=start, stop=stop)
 
-        background_dev = np.std(np.array((self.background1[:, start:stop], self.background2[:, start:stop])))
+        if self.background1.shape == self.background2.shape:
+            bg = np.array((self.background1[:, start:stop], self.background2[:, start:stop]))
+        else:
+            if sum(self.background1.shape) > sum(self.background2.shape):
+                bg = self.background1
+            else:
+                bg = self.background2
+
+        background_dev = np.std(bg)
 
         time = self.time_per_pix * (stop - start)
 

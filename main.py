@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, simpledialog, ttk
+from tkinter import filedialog, simpledialog
 
 import re
 import numpy as np
@@ -8,6 +8,7 @@ from PIL import Image, ImageTk
 
 from dataanalyzer import DataAnalyzer
 from datasample import DataSample
+import util
 
 
 class App:
@@ -34,7 +35,7 @@ class App:
         self.root.mainloop()
 
     def _debug(self):
-        pass
+        util.detect_stars(self.working_data, threshold_abs=500)
 
     def _init_vars(self):
         self.working_file = None  # active .fits file
@@ -52,8 +53,8 @@ class App:
         self.graphics_temp = []  # graphics that get removed when a new mode is entered
         self.image_clearable = []  # graphic coordinates (x, y)
         self.graphics_clearable = []  # graphics ids that stay until manually removed
-        self.image_label = []  # label coordinates + text (x, y, "text")
-        self.graphics_label = []  # label ids
+        self.image_label = {}  # label coordinates + text (x, y, "text")
+        self.custom_label_count = 0
 
         self.operation = "idle"  # tool mode
 
@@ -74,8 +75,8 @@ class App:
 
         #
         self.data_samples = []
-                             # store all used apertures as (datx, daty, data_aperture_length, data_aperture_diameter, back_aperture_enabled_lower, back_aperture_offset_lower,
-        self.apertures = []  # back_aperture_diameter_lower, back_aperture_enabled_upper, back_aperture_offset_upper, back_aperture_diameter_upper)
+                                # store all used apertures as (datx, daty, data_aperture_length, data_aperture_diameter, back_aperture_enabled_lower, back_aperture_offset_lower,
+        self.apertures = []     # back_aperture_diameter_lower, back_aperture_enabled_upper, back_aperture_offset_upper, back_aperture_diameter_upper)
 
     def _init_display(self):
         # widgets
@@ -157,6 +158,7 @@ class App:
         self.measuremenu.add_command(label="Measure Distance", command=self.measure_distance)  # distance between two points
         self.measuremenu.add_cascade(label="Aperture Settings", menu=self.measuremenu_aperture_size)
         self.measuremenu.add_command(label="Place Aperture", command=self.set_aperture)  # place apertures and measure data
+        self.measuremenu.add_command(label="Auto Measure", command=self.auto_measure)
         # -------
         self.menubar.add_cascade(label="File", menu=self.filemenu)
         self.menubar.add_cascade(label="View", menu=self.viewmenu)
@@ -181,7 +183,7 @@ class App:
 
         self.working_file = fits.open(path)
         self.working_data = self.working_file[0].data  # .fits files are a list of data sets, each having a header and data. the first is the one usually containing the image.
-        self.image_zoom = 1  # TODO: if needed, set option to open different dataset
+        self.image_zoom = 1                            # TODO: if needed, set option to open different dataset
 
         if not keep_labels:
             self.graphics_clear_labels()
@@ -190,12 +192,12 @@ class App:
 
         try:
             rdec = self.working_file[0].header["OBJCTDEC"]
-            deg, min, sec = map(int, rdec.split(" "))
+            deg, min, sec = map(float, rdec.split(" "))
             self.declination = deg + min / 60 + sec / 3600
         except KeyError:
             self.root.withdraw()
             dec = ""
-            while not (m := re.match(r"^(-?[0-9]{2})°(?:([0-5][0-9])'(?:([0-5][0-9](?:[\.,][0-9]+)?)(?:''|\"))?)?$", dec)):     # this regex matches every possible variation of declination in
+            while not (m := re.match(r"^(-?[0-9]{2})°(?:([0-5][0-9])'(?:([0-5][0-9](?:[.,][0-9]+)?)(?:''|\"))?)?$", dec)):     # this regex matches every possible variation of declination in
                 dec = simpledialog.askstring(title="", prompt="Declination of Image (XX°XX'XX,XX\")")                           # min/sec form and gives groups of °, ' and "
             self.root.deiconify()
             self.declination = float(m.group(1)) + (float(m.group(2)) / 60 if m.group(2) else 0) + (float(m.group(3).replace(",", ".")) / 3600 if m.group(3) else 0)
@@ -241,7 +243,7 @@ class App:
                 initial_dir = r"/"
             path = filedialog.asksaveasfilename(parent=self.root, initialdir=initial_dir, title="Save aperture file", defaultextension=".csv")
 
-        np.savetxt(path, self.apertures, delimiter=",")
+        np.savetxt(path, *self.apertures, delimiter=",")
 
 
 
@@ -285,8 +287,8 @@ class App:
         self.graphics_clear_all()  # kill all graphics
 
         for i in self.image_label:
-            lx, ly, ltxt = i
-            self.graphics_label.append(self.canvas.create_text(lx * self.image_zoom, ly * self.image_zoom, text=ltxt, fill="red", anchor="nw"))
+            lx, ly, ltxt = self.image_label[i][1]
+            self.image_label[i] = self.canvas.create_text(lx * self.image_zoom, ly * self.image_zoom, text=ltxt, fill="red", anchor="nw"), self.image_label[i][1]
 
         for i in self.image_clearable:
             x, y = i
@@ -303,13 +305,17 @@ class App:
         [self.canvas.delete(g) for g in self.graphics_temp]
         self.graphics_temp = []
 
+        [self.canvas.delete(self.image_label[key][0]) for key in self.image_label if not key.startswith("Custom")]
+
     def graphics_create_label(self):
         self.label_tool_text.set("Click to place a label. Shift-Click to place multiple.")
         self.operation = "label"
 
     def graphics_clear_labels(self):
-        [self.canvas.delete(g) for g in self.graphics_label]
-        self.graphics_label = []
+        [self.canvas.delete(self.image_label[g][0]) for g in self.image_label if g.startswith("Custom")]
+
+    def graphics_clear_label(self, key):
+        self.canvas.delete()
 
     # ------------------------------------------------------------------------------------------------------------------------------
     # Event Handler
@@ -374,7 +380,7 @@ class App:
                     self.label_tool_text.set(f"Distance: {d:.2f}")
 
             if self.operation == "label":
-                self.click_label(x, y, datx, daty)
+                self.click_label(datx, daty)
 
             if self.operation == "set_aperture":
                 self.click_set_aperture(x, y, datx, daty)
@@ -382,12 +388,16 @@ class App:
         if self.operation == "idle":
             self.label_tool_text.set("")
 
-    def click_label(self, x, y, datx, daty):
+    def click_label(self, datx, daty):
         if not self.shift_pressed:
             self.operation = "idle"
-        self.image_label.append((datx, daty, simpledialog.askstring("", "Label: ")))
-        lx, ly, ltxt = self.image_label[-1]
-        self.graphics_label.append(self.canvas.create_text(lx * self.image_zoom, ly * self.image_zoom, text=ltxt, fill="red", anchor="nw"))
+        self.custom_label_count += 1
+
+        title = f"Custom{self.custom_label_count}"
+
+        self.image_label[title] = (datx, daty, simpledialog.askstring("", "Label: "))
+        lx, ly, ltxt = self.image_label[f"Custom{self.custom_label_count}"]
+        self.image_label[title] = self.canvas.create_text(lx * self.image_zoom, ly * self.image_zoom, text=ltxt, fill="red", anchor="nw"), self.image_label[title]
 
     def click_set_aperture(self, x, y, datx, daty):
         if not self.shift_pressed:
@@ -412,8 +422,17 @@ class App:
         x1, y1, x2, y2 = self._get_ap_upper(datx, daty)
         back2 = self.working_data[y1:y2, x1:x2]
 
-        self.analyse_window.add_sample(DataSample(data, self.time_per_pix, back1, back2))
+        s = DataSample(data, self.time_per_pix, back1, back2)
+
+        self.analyse_window.add_sample(s)
         self.analyse_window.window.deiconify()
+
+        title = s.title
+
+        self.image_label[title] = (datx, daty, title)
+        lx, ly, ltxt = self.image_label[title]
+        self.image_label[title] = self.canvas.create_text(lx * self.image_zoom, ly * self.image_zoom, text=ltxt, fill="red", anchor="nw"), self.image_label[title]
+
 
     # ------------------------------------------------------------------------------------------------------------------------------
     # Basic Measure
@@ -434,6 +453,32 @@ class App:
         self.label_tool_text.set("Click to place aperture. Shift-Click to place multiple.")
         [self.canvas.delete(g) for g in self.graphics_temp]
         self.graphics_temp = []
+
+    # Advanced Measure
+
+    def auto_measure(self):
+        threshold = tk.simpledialog.askfloat("Auto Measure", "Set Threshold for automatic star detection")
+        stars, should_flip, should_rotate = util.detect_stars(self.working_data, threshold, min_separation=20)
+
+        if should_flip:
+            self._transform_m_y()
+        if should_rotate:
+            self._transform_r_clockwise()
+
+        stars, should_flip, should_rotate = util.detect_stars(self.working_data, threshold, min_separation=20)
+
+        boxes = []
+
+        for star in stars:
+            y, x = star
+            boxes.append(self._get_ap_main(x, y))
+
+        for star in stars:
+            y, x = star
+            if not self._check_all_intersections(x, y, boxes):
+                offset = self.data_aperture_diameter // 2
+                if self._check_is_in_image(self._get_ap_main(x + offset, y)):
+                    self.click_set_aperture(x + offset, y, x + offset, y)
 
     # ------------------------------------------------------------------------------------------------------------------------------
     # Util functions and workarounds
@@ -501,6 +546,24 @@ class App:
         x2 = x + self.data_aperture_length * self.image_zoom
         y1 = y - int((np.floor(self.data_aperture_diameter / 2)) + self.back_aperture_diameter_lower + self.back_aperture_offset_lower) * self.image_zoom
         return (x1, y1, x2, y2)
+
+    @staticmethod
+    def _check_intersection(x, y, box):
+        x1, y1, x2, y2 = box
+        if x1 <= x <= x2:
+            if y1 <= y <= y2:
+                return True
+        return False
+
+    @staticmethod
+    def _check_all_intersections(x, y, boxes):
+        return sum([App._check_intersection(x, y, box) for box in boxes]) > 1
+
+    def _check_is_in_image(self, box):
+        x1, y1, x2, y2 = box
+        if x1 < 0 or len(self.working_data[0]) <= x2 or y1 < 0 or len(self.working_data) <= y2:
+            return False
+        return True
 
 
 if __name__ == "__main__":
