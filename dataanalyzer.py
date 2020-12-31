@@ -157,7 +157,7 @@ class DataAnalyzer:
 
             self.add_sample(DataSample.build_from_json(samples[s]))
 
-    def f_save_selected(self):       # Uses pickle for now, TODO: change to more accessible format, maybe json or csv
+    def f_save_selected(self):
         initial_dir = "/"
         if "directory" in self.parent_app.args:
             initial_dir = self.parent_app.args["directory"]
