@@ -5,8 +5,9 @@ import numpy as np
 import json
 
 import matplotlib
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from matplotlib import pyplot
 from datasample import DataSample
 matplotlib.use("TkAgg")
 
@@ -16,7 +17,6 @@ class DataAnalyzer:
         self.parent_app = parent
         self.parent = parent.root
         self.window = tk.Toplevel()
-        self.window.withdraw()
 
         self.window.title("Measurements")
         self.window.geometry("800x600")
@@ -54,7 +54,10 @@ class DataAnalyzer:
                                (self.f_save_selected, "Save Measurements"))
 
         self.display_functions = ((self.f_show_crossection, "Show Crosssection"),
-                                  (self.f_show_flattened_line, "t-S-Graph"))
+                                  (self.f_show_flattened_line, "t-S-Graph"),
+                                  (self.f_show_line_fit, "Get average line"),
+                                  (self.f_vertical_align, "Vertical align"),
+                                  (self.f_aligned_crosssection, "Aligned Crosssection"))
         self.top_frame = tk.Frame(master=self.window)
         self.top_frame.pack(expand=False, fill=tk.X)
         for func in self.file_functions:
@@ -106,20 +109,39 @@ class DataAnalyzer:
     def get_sample_values(self, sample):
         return sample.signal, sample.snr, np.std(sample.get_flattened_line() / np.mean(sample.get_flattened_line()))
 
+    # -------------------------------------------------------------------------------------------------------------------------
+    # Button functions for analysis
+
     def f_show_crossection(self):
-        samples = [self.data[iid] for iid in self.datasheet.selection()]
+        samples = self._get_selected()
         title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
-        self.open_windows.append(GraphWindow(self.window, samples, "Show Crosssection", title))
+        self.open_windows.append(GraphWindow(self, samples, "Show Crosssection", title))
 
     def f_show_flattened_line(self):
-        samples = [self.data[iid] for iid in self.datasheet.selection()]
+        samples = self._get_selected()
         title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
-        self.open_windows.append(GraphWindow(self.window, samples, "t-S-Graph", title))
+        self.open_windows.append(GraphWindow(self, samples, "t-S-Graph", title))
 
-    def f_show_SNR_StdDev_graph(self):
-        samples = [self.data[iid] for iid in self.datasheet.selection()]
+    def f_show_line_fit(self):
+        samples = self._get_selected()
         title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
-        self.open_windows.append(GraphWindow(self.window, samples, "Compare SNR to StdDev", title))
+        self.open_windows.append(GraphWindow(self, samples, "Average Line", title))
+
+    def f_vertical_align(self):
+        s = self.datasheet.focus()
+        if s:
+            sample = self.data[s]
+            title = self.datasheet.item(s)["values"][0]
+            self.open_windows.append(GraphWindow(self, sample, "Vertical align", title=title))
+
+    def f_aligned_crosssection(self):
+        samples = self._get_selected()
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+        self.open_windows.append(GraphWindow(self, samples, "Aligned Crosssection", title))
+
+
+    # -------------------------------------------------------------------------------------------------------------------------
+    # Button functions for analysis
 
     def f_rename_sample(self):
         s = self.datasheet.focus()
@@ -140,7 +162,7 @@ class DataAnalyzer:
         self.datasheet.delete(*self.datasheet.get_children())
         self.parent_app.graphics_clear_all()
 
-        [self.parent_app.graphics_clear_label(key) for key in self.parent_app.image_labels if not key.startswith("Custom")]
+        [self.parent_app.graphics_clear_label(key) for key in self.parent_app.image_label if not key.startswith("Custom")]
 
     def f_open(self):
         initial_dir = "/"
@@ -195,6 +217,8 @@ class DataAnalyzer:
     def on_closing(self):
         self.window.withdraw()
 
+    def _get_selected(self):
+        return [self.data[iid] for iid in self.datasheet.selection()]
 
 class GraphWindow:
     def __init__(self, parent, samples, graph_type, title):
@@ -204,7 +228,6 @@ class GraphWindow:
 
         self.parent = parent
         self.window = tk.Toplevel()
-        self.window.withdraw()
 
         self.window.title(graph_type + ": " + ", ".join(title))
         self.window.geometry = "800x600"
@@ -212,22 +235,26 @@ class GraphWindow:
         self.normalize = tk.BooleanVar()
         self.interval = tk.IntVar()
 
+        self.frame = tk.Frame(self.window)
+        self.frame.pack(expand=False, side=tk.TOP, fill=tk.X)
+
         self.canvas = None
 
-        self.f = Figure(dpi=200)
+        self.f = Figure()
 
-        if graph_type == "t-S-Graph" or graph_type == "Compare SNR to StdDev":
-            self.slider = tk.Scale(self.window, from_=1, to=max(len(sample.data[0]) for sample in samples) // 2, orient=tk.HORIZONTAL, variable=self.interval, label="Interval for moving average: ")
+        if graph_type in ("t-S-Graph",  "Average Line"):
+            self.slider = tk.Scale(self.frame, from_=1, to=max(len(sample.data[0]) for sample in samples) // 2, orient=tk.HORIZONTAL, variable=self.interval, label="Interval for moving average: ")
             self.slider.bind("<ButtonRelease-1>", lambda x: self._redraw())
             self.slider.pack(fill=tk.BOTH, expand=True)
 
-        self.normalize_check = tk.Checkbutton(self.window, variable=self.normalize, offvalue=False, onvalue=True, text="Normalize", command=self._redraw)
+        if graph_type in ("t-S-Graph", "Average Line", "Show Crosssection", "Aligned Crosssection"):
+            self.normalize_check = tk.Checkbutton(self.frame, variable=self.normalize, offvalue=False, onvalue=True, text="Normalize", command=self._redraw)
 
-        self.normalize_check.pack(side=tk.LEFT)
+            self.normalize_check.pack(side=tk.LEFT)
 
         self.draw_figure(self.f, samples, graph_type)
 
-        self.window.deiconify()
+        self.window.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def draw_figure(self, f, samples, graph_type, interval=1, normalize=False):
         if graph_type == "t-S-Graph":
@@ -236,7 +263,7 @@ class GraphWindow:
 
             f.clear()
 
-            a = f.add_subplot(111)
+            a = f.add_subplot(111, frameon=False)
             a.set_ylabel("ADUs")
             a.set_xlabel("Pixel from Start")
 
@@ -244,14 +271,16 @@ class GraphWindow:
                 if normalize: d = d / np.mean(d)
                 a.plot(axis_x, d, label=t)
 
-            a.legend()
+            a.legend(bbox_to_anchor=(1,1), loc="upper left")
+
+            f.tight_layout()
 
         elif graph_type == "Show Crosssection":
             data = [sample.get_crosssection() for sample in samples]
 
             f.clear()
 
-            a = f.add_subplot(111)
+            a = f.add_subplot(111, frameon=False)
 
             a.set_ylabel("ADUs")
             a.set_xlabel("Pixel from Centre")
@@ -261,7 +290,67 @@ class GraphWindow:
                 offset = list(d).index(max(d))
                 a.plot(np.array([i for i in range(len(d))]) - offset, d, label=t)
 
-            a.legend()
+            if len(data) == 1:
+                fwhm, height, lo, hi = samples[0].get_fwhm()
+                a.hlines(height, lo, hi, label=f"FWHM = {fwhm}", color="C2", linestyles="dotted")
+
+            a.legend(bbox_to_anchor=(1,1), loc="upper left")
+
+            f.tight_layout()
+
+        elif graph_type == "Average Line":
+            data = np.array([sample.get_flattened_moving_average(interval) for sample in samples])
+            axis_x = [i for i in range(interval, interval + max(map(len, data)))]
+
+            for d in range(len(data)):
+                data[d] = data[d] / np.mean(data[d])
+
+            line = np.median(data, axis=0)
+
+            f.clear()
+
+            a = f.add_subplot(111, frameon=False)
+            a.set_ylabel("ADUs")
+            a.set_xlabel("Pixel from Start")
+
+            a.plot(axis_x, line, label="median")
+
+            f.tight_layout()
+
+        elif graph_type == "Vertical align":
+            data = samples.data
+            aligned_data = samples.get_realigned_to_maximum()
+
+            f.clear()
+
+            ax1 = f.add_subplot(211)
+            ax2 = f.add_subplot(212)
+
+            ax1.imshow(data)
+            ax2.imshow(aligned_data)
+
+        elif graph_type == "Aligned Crosssection":
+            data = [sample.get_realigned_crossection() for sample in samples]
+
+            f.clear()
+
+            a = f.add_subplot(111, frameon=False)
+
+            a.set_ylabel("ADUs")
+            a.set_xlabel("Pixel from Centre")
+
+            for d, t in zip(data, self.title):
+                if normalize: d = d / np.max(d)
+                offset = list(d).index(max(d))
+                a.plot(np.array([i for i in range(len(d))]) - offset, d, label=t)
+
+            if len(data) == 1:
+                fwhm, height, lo, hi = samples[0].get_realigned_fwhm()
+                a.hlines(height, lo, hi, label=f"FWHM = {fwhm}", color="C2", linestyles="dotted")
+
+            a.legend(bbox_to_anchor=(1, 1), loc="upper left")
+
+            f.set_tight_layout(True)
 
         else:
             raise ValueError
@@ -274,3 +363,7 @@ class GraphWindow:
 
     def _redraw(self):
         self.draw_figure(self.f, self.samples, self.graph_type, interval=self.interval.get(), normalize=self.normalize.get())
+
+    def on_closing(self):
+        self.parent.open_windows.remove(self)
+        self.window.destroy()

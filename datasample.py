@@ -17,8 +17,6 @@ class DataSample:
 
         self.title = title
 
-        self.fwhm = 0
-
         self.data = self._data()
 
         self.signal_raw = self._signal_raw()
@@ -119,7 +117,7 @@ class DataSample:
     def get_crosssection(self, start=0, stop=0):  # returns view parallel to drift direction, useful for calculating FWHM
         start, stop = self._adjust_bounds(start, stop)
 
-        section = self.data_raw[:, start:stop]
+        section = self.data[:, start:stop]
         crosssection = np.sum(section, axis=1)
 
         return crosssection
@@ -177,3 +175,92 @@ class DataSample:
             stddev.append(self.get_stddev_from_numbers(i, i + interval))
 
         return np.array(stddev)
+
+    def get_realigned_to_maximum(self, vertical_interval=5, start=0, stop=0):
+        def _shift(col, n):
+            if n >= 0:
+                return np.concatenate((np.full(n, 0), col[:-n]))
+            else:
+                return np.concatenate((col[-n:], np.full(-n, 0)))
+
+        start, stop = self._adjust_bounds(start, stop)
+
+        data = self.data[:, start:stop].T.copy()
+        middle = len(self.data) // 2
+
+        for column in range(len(data)):
+            max = 0
+            maxi = 0
+            for i in range(len(data[column]) - vertical_interval):
+                if np.sum(data[column, i:i+vertical_interval]) > max:
+                    max = np.sum(data[column, i:i+vertical_interval])
+                    maxi = i + vertical_interval // 2
+
+            if middle-maxi != 0:
+                data[column] = _shift(data[column], middle - maxi)
+
+        return data.T
+
+    def get_realigned_crossection(self, vertical_interval=5, start=0, stop=0):
+        start, stop = self._adjust_bounds(start, stop)
+
+        return np.sum(self.get_realigned_to_maximum(vertical_interval=vertical_interval, start=start, stop=stop), axis=1)
+
+    def get_fwhm(self, start=0, stop=0):
+        def get_interpolated(y, lo, hi):
+            return (y - lo) / (hi - lo)
+
+        start, stop = self._adjust_bounds(start, stop)
+
+        data = self.get_crosssection(start=start, stop=stop)
+
+        maximum = np.max(data)
+
+        pos_max = list(data).index(maximum)
+
+        lo, hi = pos_max, pos_max
+
+        for i in range(pos_max, 1, -1):
+            if data[i-1] < maximum / 2:
+                lo = i
+                break
+
+        for i in range(pos_max, len(data)-1):
+            if data[i+1] < maximum / 2:
+                hi = i
+                break
+
+        lo += get_interpolated(maximum / 2, data[lo], data[lo+1]) - pos_max
+        hi += get_interpolated(maximum / 2, data[hi], data[hi+1]) - pos_max
+
+        return hi-lo, maximum / 2, lo, hi
+
+
+    def get_realigned_fwhm(self, start=0, stop=0):
+        def get_interpolated(y, lo, hi):
+            return (y - lo) / (hi - lo)
+
+        start, stop = self._adjust_bounds(start, stop)
+
+        data = self.get_realigned_crossection(start=start, stop=stop)
+
+        maximum = np.max(data)
+
+        pos_max = list(data).index(maximum)
+
+        lo, hi = pos_max, pos_max
+
+        for i in range(pos_max, 0, -1):
+            if data[i] < maximum / 2:
+                lo = i
+                break
+
+        for i in range(pos_max, len(data) - 1):
+            if data[i + 1] < maximum / 2:
+                hi = i
+                break
+
+        lo += get_interpolated(maximum / 2, data[lo], data[lo+1]) - pos_max
+        hi += get_interpolated(maximum / 2, data[hi], data[hi+1]) - pos_max
+
+        return hi - lo, maximum / 2, lo, hi

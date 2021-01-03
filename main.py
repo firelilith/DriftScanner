@@ -305,7 +305,12 @@ class App:
         [self.canvas.delete(g) for g in self.graphics_temp]
         self.graphics_temp = []
 
+        self.image_clearable = []
+
         [self.canvas.delete(self.image_label[key][0]) for key in self.image_label if not key.startswith("Custom")]
+
+        delete = [key for key in self.image_label if not key.startswith("Custom")]
+        [self.image_label.pop(key) for key in delete]
 
     def graphics_create_label(self):
         self.label_tool_text.set("Click to place a label. Shift-Click to place multiple.")
@@ -315,7 +320,7 @@ class App:
         [self.canvas.delete(self.image_label[g][0]) for g in self.image_label if g.startswith("Custom")]
 
     def graphics_clear_label(self, key):
-        self.canvas.delete()
+        self.canvas.delete(self.image_label[key][0])
 
     # ------------------------------------------------------------------------------------------------------------------------------
     # Event Handler
