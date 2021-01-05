@@ -19,7 +19,7 @@ class DataAnalyzer:
         self.window = tk.Toplevel()
 
         self.window.title("Measurements")
-        self.window.geometry("800x600")
+        self.window.geometry("1200x600")
 
         self.data = dict()
         self.sample_count = 0
@@ -54,17 +54,21 @@ class DataAnalyzer:
                                (self.f_save_selected, "Save Measurements"))
 
         self.display_functions = ((self.f_show_crossection, "Show Crosssection"),
+                                  (self.f_show_maximum_wobble, "t-Y-Graph"),
                                   (self.f_show_flattened_line, "t-S-Graph"),
                                   (self.f_show_line_fit, "Get average line"),
                                   (self.f_vertical_align, "Vertical align"),
-                                  (self.f_aligned_crosssection, "Aligned Crosssection"))
+                                  (self.f_aligned_crosssection, "Aligned Crosssection"),
+                                  (self.f_t_s_fourier, "t-S-Fourier"),
+                                  (self.f_t_y_fourier, "t-Y-Fourier"),
+                                  (self.f_slope_adjusted_t_y, "Slope adjusted t-Y-Graph"))
         self.top_frame = tk.Frame(master=self.window)
         self.top_frame.pack(expand=False, fill=tk.X)
         for func in self.file_functions:
             b = tk.Button(master=self.top_frame, command=func[0], text=func[1])
             b.pack(side=tk.LEFT)
 
-        columns = ("Title", "Brightness", "SNR", "Normalized StdDev")
+        columns = ("Title", "Altitude", "Brightness", "SNR", "Normalized StdDev", "Y-Variations over 5s")
 
         self.datasheet = ttk.Treeview(self.window, columns=columns, show="headings")
 
@@ -107,7 +111,11 @@ class DataAnalyzer:
         self.data[key] = sample
 
     def get_sample_values(self, sample):
-        return sample.signal, sample.snr, np.std(sample.get_flattened_line() / np.mean(sample.get_flattened_line()))
+        return (sample.meta_info["altitude"],
+                sample.signal,
+                sample.snr,
+                np.std(sample.get_flattened_line() / np.mean(sample.get_flattened_line())),
+                np.std(sample.get_slope_adjusted_t_y(interval=round(5/sample.time_per_pix))))
 
     # -------------------------------------------------------------------------------------------------------------------------
     # Button functions for analysis
@@ -115,7 +123,12 @@ class DataAnalyzer:
     def f_show_crossection(self):
         samples = self._get_selected()
         title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
-        self.open_windows.append(GraphWindow(self, samples, "Show Crosssection", title))
+        self.open_windows.append(GraphWindow(self, samples, "Crosssection", title))
+
+    def f_show_maximum_wobble(self):
+        samples = self._get_selected()
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+        self.open_windows.append(GraphWindow(self, samples, "t-Y-Graph", title))
 
     def f_show_flattened_line(self):
         samples = self._get_selected()
@@ -131,7 +144,7 @@ class DataAnalyzer:
         s = self.datasheet.focus()
         if s:
             sample = self.data[s]
-            title = self.datasheet.item(s)["values"][0]
+            title = [self.datasheet.item(s)["values"][0]]
             self.open_windows.append(GraphWindow(self, sample, "Vertical align", title=title))
 
     def f_aligned_crosssection(self):
@@ -139,6 +152,20 @@ class DataAnalyzer:
         title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
         self.open_windows.append(GraphWindow(self, samples, "Aligned Crosssection", title))
 
+    def f_t_s_fourier(self):
+        samples = self._get_selected()
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+        self.open_windows.append(GraphWindow(self, samples, "t-S-Fourier", title))
+
+    def f_t_y_fourier(self):
+        samples = self._get_selected()
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+        self.open_windows.append(GraphWindow(self, samples, "t-Y-Fourier", title))
+
+    def f_slope_adjusted_t_y(self):
+        samples = self._get_selected()
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+        self.open_windows.append(GraphWindow(self, samples, "Slope adjusted t-Y-Graph", title))
 
     # -------------------------------------------------------------------------------------------------------------------------
     # Button functions for analysis
@@ -241,13 +268,14 @@ class GraphWindow:
         self.canvas = None
 
         self.f = Figure()
+        self.f.set_tight_layout(True)
 
-        if graph_type in ("t-S-Graph",  "Average Line"):
+        if graph_type in ("t-Y-Graph", "t-S-Graph",  "Average Line", "t-S-Fourier", "t-Y-Fourier"):
             self.slider = tk.Scale(self.frame, from_=1, to=max(len(sample.data[0]) for sample in samples) // 2, orient=tk.HORIZONTAL, variable=self.interval, label="Interval for moving average: ")
             self.slider.bind("<ButtonRelease-1>", lambda x: self._redraw())
             self.slider.pack(fill=tk.BOTH, expand=True)
 
-        if graph_type in ("t-S-Graph", "Average Line", "Show Crosssection", "Aligned Crosssection"):
+        if graph_type in ("t-S-Graph", "Crosssection", "Aligned Crosssection", "Slope adjusted t-Y-Graph"):
             self.normalize_check = tk.Checkbutton(self.frame, variable=self.normalize, offvalue=False, onvalue=True, text="Normalize", command=self._redraw)
 
             self.normalize_check.pack(side=tk.LEFT)
@@ -257,32 +285,18 @@ class GraphWindow:
         self.window.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def draw_figure(self, f, samples, graph_type, interval=1, normalize=False):
-        if graph_type == "t-S-Graph":
-            data = [sample.get_flattened_moving_average(interval) for sample in samples]
-            axis_x = [i for i in range(interval, interval + max(map(len, data)))]
 
-            f.clear()
-
-            a = f.add_subplot(111, frameon=False)
-            a.set_ylabel("ADUs")
-            a.set_xlabel("Pixel from Start")
-
-            for d, t in zip(data, self.title):
-                if normalize: d = d / np.mean(d)
-                a.plot(axis_x, d, label=t)
-
-            a.legend(bbox_to_anchor=(1,1), loc="upper left")
-
-            f.tight_layout()
-
-        elif graph_type == "Show Crosssection":
+        if graph_type == "Crosssection":
             data = [sample.get_crosssection() for sample in samples]
 
             f.clear()
 
             a = f.add_subplot(111, frameon=False)
 
-            a.set_ylabel("ADUs")
+            if not self.normalize.get():
+                a.set_ylabel("ADUs")
+            else:
+                a.set_ylabel("Relative ADUs")
             a.set_xlabel("Pixel from Centre")
 
             for d, t in zip(data, self.title):
@@ -294,9 +308,39 @@ class GraphWindow:
                 fwhm, height, lo, hi = samples[0].get_fwhm()
                 a.hlines(height, lo, hi, label=f"FWHM = {fwhm}", color="C2", linestyles="dotted")
 
-            a.legend(bbox_to_anchor=(1,1), loc="upper left")
+            a.legend(bbox_to_anchor=(1, 1), loc="upper left")
 
-            f.tight_layout()
+        elif graph_type == "t-Y-Graph":
+            data = [sample.get_maximum_shift_moving_average(interval=interval) for sample in samples]
+            axis_x = [i for i in range(interval, interval + max(map(len, data)))]
+
+            f.clear()
+
+            a = f.add_subplot(111, frameon=False)
+            a.set_ylabel("Pixel from Mean")
+            a.set_xlabel("Pixel from Start")
+
+            for d, t in zip(data, self.title):
+                a.plot(axis_x, d, label=t)
+
+        elif graph_type == "t-S-Graph":
+            data = [sample.get_flattened_moving_average(interval) for sample in samples]
+            axis_x = [i for i in range(interval, interval + max(map(len, data)))]
+
+            f.clear()
+
+            a = f.add_subplot(111, frameon=False)
+            if not self.normalize.get():
+                a.set_ylabel("ADUs")
+            else:
+                a.set_ylabel("Relative ADUs")
+            a.set_xlabel("Pixel from Start")
+
+            for d, t in zip(data, self.title):
+                if normalize: d = d / np.mean(d)
+                a.plot(axis_x, d, label=t)
+
+            a.legend(bbox_to_anchor=(1,1), loc="upper left")
 
         elif graph_type == "Average Line":
             data = np.array([sample.get_flattened_moving_average(interval) for sample in samples])
@@ -310,12 +354,11 @@ class GraphWindow:
             f.clear()
 
             a = f.add_subplot(111, frameon=False)
-            a.set_ylabel("ADUs")
+
+            a.set_ylabel("Relative ADUs")
             a.set_xlabel("Pixel from Start")
 
             a.plot(axis_x, line, label="median")
-
-            f.tight_layout()
 
         elif graph_type == "Vertical align":
             data = samples.data
@@ -336,7 +379,10 @@ class GraphWindow:
 
             a = f.add_subplot(111, frameon=False)
 
-            a.set_ylabel("ADUs")
+            if not self.normalize.get():
+                a.set_ylabel("ADUs")
+            else:
+                a.set_ylabel("Relative ADUs")
             a.set_xlabel("Pixel from Centre")
 
             for d, t in zip(data, self.title):
@@ -350,7 +396,52 @@ class GraphWindow:
 
             a.legend(bbox_to_anchor=(1, 1), loc="upper left")
 
-            f.set_tight_layout(True)
+        elif graph_type == "t-S-Fourier":
+            data = [sample.get_t_s_fourier(interval=interval) for sample in samples]
+            data = [data[i][5:len(data[i]) // 2] for i in range(len(data))]
+            axis_x = [i for i in range(5, len(data[0]) + 5)]
+
+            f.clear()
+
+            a = f.add_subplot(111, frameon=False)
+            a.set_ylabel("Fit")
+            a.set_xlabel("Frequency")
+
+            for d, t in zip(data, self.title):
+                a.plot(axis_x, d, label=t)
+
+            a.legend(bbox_to_anchor=(1, 1), loc="upper left")
+
+        elif graph_type == "t-Y-Fourier":
+            data = [sample.get_t_y_fourier(interval=interval) for sample in samples]
+            data = [data[i][5:len(data[i]) // 2] for i in range(len(data))]
+            axis_x = [i for i in range(5, len(data[0]) + 5)]
+
+            f.clear()
+
+            a = f.add_subplot(111, frameon=False)
+            a.set_ylabel("Fit")
+            a.set_xlabel("Frequency")
+
+            for d, t in zip(data, self.title):
+                a.plot(axis_x, d, label=t)
+
+            a.legend(bbox_to_anchor=(1, 1), loc="upper left")
+
+        elif graph_type == "Slope adjusted t-Y-Graph":
+            data = [sample.get_slope_adjusted_t_y(interval=interval) for sample in samples]
+            axis_x = [i for i in range(interval, interval + max(map(len, data)))]
+
+            f.clear()
+
+            a = f.add_subplot(111, frameon=False)
+            a.set_ylabel("Pixel from Max")
+            a.set_xlabel("Pixel from Start")
+
+            for d, t in zip(data, self.title):
+                a.plot(axis_x, d, label=t)
+
+            a.legend(bbox_to_anchor=(1, 1), loc="upper left")
 
         else:
             raise ValueError

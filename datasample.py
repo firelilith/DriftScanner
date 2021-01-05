@@ -2,7 +2,7 @@ import numpy as np
 
 
 class DataSample:
-    def __init__(self, data, time_per_pix, background1, background2, title="", readout_noise=0):
+    def __init__(self, data, time_per_pix, background1, background2, meta_info={},title="", readout_noise=12.7865):
         """DataSample(data, time_per_pix, background, background2, readout_noise)
         Param:
         data = 2d numpy array-like object: drift data
@@ -24,6 +24,8 @@ class DataSample:
 
         self.snr = self.get_snr()
 
+        self.meta_info = meta_info
+
         # print(self.background1, self.background2, self._background_avg())
         # print(self.data_raw, self.data)
         # print(self.signal_raw, self.signal, self.snr)
@@ -36,6 +38,7 @@ class DataSample:
         data["background2"] = list(map(lambda x: list(map(float, x)), list(self.background2)))
         data["time_per_pix"] = self.time_per_pix
         data["readout_noise"] = self.readout_dev
+        data["meta_info"] = self.meta_info
 
         return data
 
@@ -47,8 +50,9 @@ class DataSample:
         background2 = np.array(json["background2"])
         time_per_pix = json["time_per_pix"]
         readout_noise = json["readout_noise"]
+        meta_info = json["meta_info"]
 
-        return DataSample(data, time_per_pix, background1, background2, title=title, readout_noise=readout_noise)
+        return DataSample(data, time_per_pix, background1, background2, meta_info=meta_info, title=title, readout_noise=readout_noise)
 
     def _adjust_bounds(self, start, stop):
         if start > stop:
@@ -91,7 +95,7 @@ class DataSample:
         subarr = self.data[:, start:stop]
         return np.sum(subarr)
 
-    def get_snr(self, start=0, stop=0):
+    def get_snr(self, start=0, stop=0, readout_time=25, readout_dev=0):
         start, stop = self._adjust_bounds(start, stop)
 
         signal = self._signal_background(start=start, stop=stop)
@@ -110,7 +114,7 @@ class DataSample:
 
         pixel_count = np.size(self.data, 0) * (stop - start)
 
-        snr = signal / np.sqrt(signal + time * pixel_count * (background_dev + self.readout_dev))
+        snr = signal / np.sqrt(signal + time * pixel_count * (background_dev + self.readout_dev**2))
 
         return snr
 
@@ -145,7 +149,7 @@ class DataSample:
 
         return np.std(self.get_flattened_line(start, stop))
 
-    def get_flattened_moving_average(self, interval, start=0, stop=0):
+    def get_flattened_moving_average(self, interval=1, start=0, stop=0):
         start, stop = self._adjust_bounds(start, stop)
 
         line = self.get_flattened_line(start, stop)
@@ -264,3 +268,62 @@ class DataSample:
         hi += get_interpolated(maximum / 2, data[hi], data[hi+1]) - pos_max
 
         return hi - lo, maximum / 2, lo, hi
+
+    def get_maximum_shift(self, vertical_interval=5, start=0, stop=0):
+        start, stop = self._adjust_bounds(start, stop)
+
+        max_positions = []
+
+        middle = len(self.data) // 2
+
+        for column in self.data[:, start:stop].T:
+            max = 0
+            maxi = 0
+            for i in range(len(column) - vertical_interval):
+                if np.sum(column[i:i + vertical_interval]) > max:
+                    max = np.sum(column[i:i + vertical_interval])
+                    maxi = i + vertical_interval // 2
+
+            max_positions.append(middle - maxi)
+
+        return max_positions
+
+    def get_maximum_shift_moving_average(self, interval=1, vertical_interval=5, start=0, stop=0):
+        start, stop = self._adjust_bounds(start, stop)
+
+        max_shift = self.get_maximum_shift(vertical_interval=vertical_interval, start=start, stop=stop)
+
+        avg = [np.mean(max_shift[i:i+interval]) for i in range(start, stop-interval)]
+
+        return np.array(avg)
+
+    def get_t_s_fourier(self, interval=1, start=0, stop=0):
+        start, stop = self._adjust_bounds(start, stop)
+
+        data = self.get_flattened_moving_average(interval, start, stop)
+
+        fourier = np.fft.fft(data)
+
+        return np.abs(fourier)
+
+    def get_t_y_fourier(self, interval=1, start=0, stop=0):
+        start, stop = self._adjust_bounds(start, stop)
+
+        data = self.get_maximum_shift_moving_average(interval=interval, vertical_interval=5, start=start, stop=stop)
+
+        fourier = np.fft.fft(data)
+
+        return np.abs(fourier)
+
+    def get_slope_adjusted_t_y(self, interval=1, start=0, stop=0):
+        start, stop = self._adjust_bounds(start, stop)
+
+        data = self.get_maximum_shift_moving_average(interval=interval, start=start, stop=stop)
+
+        data_x = np.arange(len(data)) - len(data) // 2
+
+        regression_coef = np.polyfit(data_x, data, 1)
+
+        fitted = np.poly1d(regression_coef)(data_x)
+
+        return data - fitted

@@ -181,6 +181,7 @@ class App:
                 initial_dir = r"/"
             path = filedialog.askopenfilename(parent=self.root, initialdir=initial_dir, title="Select file")
 
+        self.working_path = path
         self.working_file = fits.open(path)
         self.working_data = self.working_file[0].data  # .fits files are a list of data sets, each having a header and data. the first is the one usually containing the image.
         self.image_zoom = 1                            # TODO: if needed, set option to open different dataset
@@ -337,7 +338,7 @@ class App:
             if (0 <= x and x < hix and 0 <= y and y < hiy):
                 self.label_info_text.set(f"X: {x}  Y: {y} B: {self.working_data[y, x]}")  # give infos in top label: X, Y, Brightness
 
-            if self.operation == "set_aperture":  # follow cursor with a aperture sized rectangle
+            if self.operation == "set_aperture":  # follow cursor with an aperture sized rectangle
                 x, y = c.canvasx(event.x), c.canvasy(event.y)
 
                 [self.canvas.delete(g) for g in self.graphics_temp]
@@ -427,7 +428,9 @@ class App:
         x1, y1, x2, y2 = self._get_ap_upper(datx, daty)
         back2 = self.working_data[y1:y2, x1:x2]
 
-        s = DataSample(data, self.time_per_pix, back1, back2)
+        meta_info = {"altitude":re.search(r"[\d.]+deg", self.working_path).group(), "declination":self.declination, "exposure":self.working_file[0].header["EXPOSURE"]}
+
+        s = DataSample(data, self.time_per_pix, back1, back2, meta_info=meta_info)
 
         self.analyse_window.add_sample(s)
         self.analyse_window.window.deiconify()

@@ -12,7 +12,7 @@ for i in range(5):
 
 window.mainloop()"""
 
-
+"""
 def _shift(arr, n):
     if n >= 0:
         return np.concatenate((np.full(n, 0), arr[:-n]))
@@ -37,4 +37,4 @@ for column in range(len(array)):
         array[column] = _shift(array[column], middle - maximum)
 
 print(array.T)
-
+"""
