@@ -62,10 +62,10 @@ def detect_stars(data_image, threshold_abs=None, min_separation=20, scan_length=
 
     return points, should_flip, should_rotate_cw
 
-def get_dark_noise(directory_of_darks, quick=False):
-    """returns the average standard deviation for the difference of two darks. matches every possible combination of two files, so it's
+def get_readout_noise(directory_of_bias, quick=False):
+    """returns the average standard deviation for the difference of two bias images. matches every possible combination of two files, so it's
     lengthy and scales with O(n^2), so use with care with larger number of files. pass quick=True to only do one pair"""
-    files = [directory_of_darks + file for file in listdir(directory_of_darks) if (file.lower().endswith(".fit") or file.lower().endswith("fits")) and not file.startswith("Master")]
+    files = [directory_of_bias + file for file in listdir(directory_of_bias) if (file.lower().endswith(".fit") or file.lower().endswith("fits")) and not file.startswith("Master")]
 
     stdevs = []
 
@@ -85,6 +85,21 @@ def get_dark_noise(directory_of_darks, quick=False):
                 return stdevs[0]
     return np.median(stdevs)
 
+def get_dark_noise(directory_of_dark, quick=False):
+    files = [directory_of_dark + file for file in listdir(directory_of_dark) if (file.lower().endswith(".fit") or file.lower().endswith("fits")) and not file.startswith("Master")]
+
+    stdevs = []
+
+    for i , file in enumerate(files):
+        f = fits.open(file)
+        print(f"Calculating Stddev of file {i}. {i/len(files) * 100}% done")
+
+        stdevs.append(np.std(np.array(f[0].data, dtype=int)))
+
+        if quick:
+            break
+
+    return np.median(stdevs)
 
 if __name__=="__main__":
-    print(get_dark_noise("C:/Users/ole/OneDrive/Desktop/Jufo/Daten/Darks5s/"))
+    print(get_dark_noise("C:/Users/ole/OneDrive/Desktop/Jufo/Daten/Darks30s/"))

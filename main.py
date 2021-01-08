@@ -179,7 +179,8 @@ class App:
                 initial_dir = self.args["directory"]
             else:
                 initial_dir = r"/"
-            path = filedialog.askopenfilename(parent=self.root, initialdir=initial_dir, title="Select file")
+            while not path:
+                path = filedialog.askopenfilename(parent=self.root, initialdir=initial_dir, title="Select file")
 
         self.working_path = path
         self.working_file = fits.open(path)
@@ -205,7 +206,14 @@ class App:
         finally:
             print("The declination is: ", self.declination)
             self.root.withdraw()
-            arcsec_per_pix = float(simpledialog.askstring(title="", prompt="Arcsec per pixel"))
+
+            arcsec_per_pix = 0
+            while not arcsec_per_pix:
+                try:
+                    arcsec_per_pix = float(simpledialog.askstring(title="", prompt="Arcsec per pixel"))
+                except TypeError:
+                    pass
+
             self.root.deiconify()
             print(1 / (24 / 360.9856 / np.cos(np.deg2rad(self.declination))))
             self.time_per_pix = 24 / 360.9856 / np.cos(np.deg2rad(self.declination)) * arcsec_per_pix
@@ -428,7 +436,10 @@ class App:
         x1, y1, x2, y2 = self._get_ap_upper(datx, daty)
         back2 = self.working_data[y1:y2, x1:x2]
 
-        meta_info = {"altitude":re.search(r"[\d.]+deg", self.working_path).group(), "declination":self.declination, "exposure":self.working_file[0].header["EXPOSURE"]}
+        meta_info = {"altitude": re.search(r"[\d.]+deg", self.working_path).group(),
+                     "declination": self.declination,
+                     "exposure": self.working_file[0].header["EXPOSURE"],
+                     "time_per_pix": self.time_per_pix}
 
         s = DataSample(data, self.time_per_pix, back1, back2, meta_info=meta_info)
 

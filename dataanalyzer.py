@@ -7,7 +7,7 @@ import json
 import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-from matplotlib import pyplot
+from scipy.stats import norm
 from datasample import DataSample
 matplotlib.use("TkAgg")
 
@@ -51,31 +51,31 @@ class DataAnalyzer:
                                (self.f_delete_selected, "Delete Selected"),
                                (self.f_delete_all, "Delete All"),
                                (self.f_open, "Open Measurements"),
-                               (self.f_save_selected, "Save Measurements"))
+                               (self.f_save_selected, "Save Measurements"),
+                               (self.f_save_headers, "Save only Headers"))
 
-        self.display_functions = ((self.f_show_crossection, "Show Crosssection"),
-                                  (self.f_show_maximum_wobble, "t-Y-Graph"),
-                                  (self.f_show_flattened_line, "t-S-Graph"),
-                                  (self.f_show_line_fit, "Get average line"),
-                                  (self.f_vertical_align, "Vertical align"),
-                                  (self.f_aligned_crosssection, "Aligned Crosssection"),
-                                  (self.f_t_s_fourier, "t-S-Fourier"),
-                                  (self.f_t_y_fourier, "t-Y-Fourier"),
-                                  (self.f_slope_adjusted_t_y, "Slope adjusted t-Y-Graph"))
+        self.display_functions = (((self.f_show_raw_crosssection, "Raw Crosssection"), (self.f_slope_adjusted_crosssection, "Slope adjusted Crossection"),
+                                   (self.f_aligned_crosssection, "Aligned Crosssection")),
+
+                                  ((self.f_show_maximum_wobble, "t-Y-Graph"), (self.f_slope_adjusted_t_y, "Slope adjusted t-Y-Graph")),
+                                  ((self.f_show_flattened_line, "t-S-Graph"), (self.f_show_line_fit, "Get average line")),
+                                  ((self.f_t_s_fourier, "t-S-Fourier"), (self.f_t_y_fourier, "t-Y-Fourier")),
+                                  ((self.f_vertical_align, "Vertical align"), (self.f_binary_star_separation, "Binary Star Separation")))
+
         self.top_frame = tk.Frame(master=self.window)
         self.top_frame.pack(expand=False, fill=tk.X)
         for func in self.file_functions:
             b = tk.Button(master=self.top_frame, command=func[0], text=func[1])
             b.pack(side=tk.LEFT)
 
-        columns = ("Title", "Altitude", "Brightness", "SNR", "Normalized StdDev", "Y-Variations over 5s")
+        self.columns = ("Title", "Altitude", "Brightness", "SNR", "Normalized StdDev", "Y-Variations over 5s")
 
-        self.datasheet = ttk.Treeview(self.window, columns=columns, show="headings")
+        self.datasheet = ttk.Treeview(self.window, columns=self.columns, show="headings")
 
-        for col in columns:
+        for col in self.columns:
             self.datasheet.heading(col, text=col, command=lambda _col=col: self.sort_by_column(_col, False))
 
-        for h in columns:
+        for h in self.columns:
             self.datasheet.heading(h, text=h)
 
         self.datasheet.pack(fill="both", expand=True, side=tk.TOP)
@@ -89,10 +89,11 @@ class DataAnalyzer:
 
         self.bottom_frame = tk.Frame(master=self.window)
         self.bottom_frame.pack(expand=False, fill=tk.X)
-        for func in self.display_functions:
-            b = tk.Button(master=self.bottom_frame, command=func[0], text=func[1])
-            b.pack(side=tk.LEFT)
 
+        for j, group in enumerate(self.display_functions):
+            for i, func in enumerate(group):
+                b = tk.Button(master=self.bottom_frame, command=func[0], text=func[1])
+                b.grid(column=j, row=i, sticky="NESW", padx=5)
 
         # Event handling
 
@@ -120,10 +121,10 @@ class DataAnalyzer:
     # -------------------------------------------------------------------------------------------------------------------------
     # Button functions for analysis
 
-    def f_show_crossection(self):
+    def f_show_raw_crosssection(self):
         samples = self._get_selected()
         title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
-        self.open_windows.append(GraphWindow(self, samples, "Crosssection", title))
+        self.open_windows.append(GraphWindow(self, samples, "Raw Crosssection", title))
 
     def f_show_maximum_wobble(self):
         samples = self._get_selected()
@@ -143,7 +144,7 @@ class DataAnalyzer:
     def f_vertical_align(self):
         s = self.datasheet.focus()
         if s:
-            sample = self.data[s]
+            sample = [self.data[s]]
             title = [self.datasheet.item(s)["values"][0]]
             self.open_windows.append(GraphWindow(self, sample, "Vertical align", title=title))
 
@@ -166,6 +167,18 @@ class DataAnalyzer:
         samples = self._get_selected()
         title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
         self.open_windows.append(GraphWindow(self, samples, "Slope adjusted t-Y-Graph", title))
+
+    def f_slope_adjusted_crosssection(self):
+        samples = self._get_selected()
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+        self.open_windows.append(GraphWindow(self, samples, "Slope adjusted Crosssection", title))
+
+    def f_binary_star_separation(self):
+        s = self.datasheet.focus()
+        if s:
+            sample = [self.data[s]]
+            title = [self.datasheet.item(s)["values"][0]]
+            self.open_windows.append(GraphWindow(self, sample, "Binary Star Separation", title=title))
 
     # -------------------------------------------------------------------------------------------------------------------------
     # Button functions for analysis
@@ -226,6 +239,23 @@ class DataAnalyzer:
         with open(file, "w") as f:
             json.dump(samples, f)
 
+    def f_save_headers(self):
+        initial_dir = "/"
+        if "directory" in self.parent_app.args:
+            initial_dir = self.parent_app.args["directory"]
+        file = tk.filedialog.asksaveasfilename(defaultextension=".json", initialdir=initial_dir).strip()
+
+        if not file.endswith(".json"):
+            file += ".json"
+
+        samples = {}
+
+        for child in self.datasheet.get_children():
+            samples[self.datasheet.item(child)["values"][0]] = self.datasheet.item(child)["values"]
+
+        with open(file, "w") as f:
+            json.dump(samples, f)
+
     # Event Handling
 
     def sort_by_column(self, col, reverse):
@@ -261,6 +291,7 @@ class GraphWindow:
 
         self.normalize = tk.BooleanVar()
         self.interval = tk.IntVar()
+        self.custom_fwhm = tk.DoubleVar()
 
         self.frame = tk.Frame(self.window)
         self.frame.pack(expand=False, side=tk.TOP, fill=tk.X)
@@ -270,23 +301,31 @@ class GraphWindow:
         self.f = Figure()
         self.f.set_tight_layout(True)
 
-        if graph_type in ("t-Y-Graph", "t-S-Graph",  "Average Line", "t-S-Fourier", "t-Y-Fourier"):
+        if graph_type in ("t-Y-Graph", "t-S-Graph",  "Average Line", "t-S-Fourier", "t-Y-Fourier", "Slope adjusted t-Y-Graph"):
             self.slider = tk.Scale(self.frame, from_=1, to=max(len(sample.data[0]) for sample in samples) // 2, orient=tk.HORIZONTAL, variable=self.interval, label="Interval for moving average: ")
             self.slider.bind("<ButtonRelease-1>", lambda x: self._redraw())
             self.slider.pack(fill=tk.BOTH, expand=True)
 
-        if graph_type in ("t-S-Graph", "Crosssection", "Aligned Crosssection", "Slope adjusted t-Y-Graph"):
+            self.slider.set(self.samples[0].delta_pix())
+
+        if graph_type == "Binary Star Separation":
+            self.slider = tk.Scale(self.frame, from_=0, to=samples[0].get_realigned_fwhm()[0] * 2, resolution=0.01 , orient=tk.HORIZONTAL, variable=self.custom_fwhm, label="FWHM")
+            self.slider.set(samples[0].get_realigned_fwhm()[0])
+            self.slider.bind("<ButtonRelease-1>", lambda x: self._redraw())
+            self.slider.pack(fill=tk.BOTH, expand=True)
+
+        if graph_type in ("t-S-Graph", "Raw Crosssection", "Aligned Crosssection", "Slope adjusted Crosssection"):
             self.normalize_check = tk.Checkbutton(self.frame, variable=self.normalize, offvalue=False, onvalue=True, text="Normalize", command=self._redraw)
 
             self.normalize_check.pack(side=tk.LEFT)
 
-        self.draw_figure(self.f, samples, graph_type)
+        self.draw_figure(self.f, samples, graph_type, interval=self.samples[0].delta_pix())
 
         self.window.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def draw_figure(self, f, samples, graph_type, interval=1, normalize=False):
 
-        if graph_type == "Crosssection":
+        if graph_type == "Raw Crosssection":
             data = [sample.get_crosssection() for sample in samples]
 
             f.clear()
@@ -300,12 +339,15 @@ class GraphWindow:
             a.set_xlabel("Pixel from Centre")
 
             for d, t in zip(data, self.title):
-                if normalize: d = d / np.max(d)
+                if normalize:
+                    graph_max = np.max(d)
+                    d = d / graph_max
                 offset = list(d).index(max(d))
                 a.plot(np.array([i for i in range(len(d))]) - offset, d, label=t)
 
             if len(data) == 1:
                 fwhm, height, lo, hi = samples[0].get_fwhm()
+                if normalize: height /= graph_max
                 a.hlines(height, lo, hi, label=f"FWHM = {fwhm}", color="C2", linestyles="dotted")
 
             a.legend(bbox_to_anchor=(1, 1), loc="upper left")
@@ -361,19 +403,22 @@ class GraphWindow:
             a.plot(axis_x, line, label="median")
 
         elif graph_type == "Vertical align":
-            data = samples.data
-            aligned_data = samples.get_realigned_to_maximum()
+            data = samples[0].data
+            slope_adjusted_data = samples[0].get_slope_adjusted_data()
+            aligned_data = samples[0].get_realigned_to_maximum()
 
             f.clear()
 
-            ax1 = f.add_subplot(211)
-            ax2 = f.add_subplot(212)
+            ax1 = f.add_subplot(311, ylabel="raw")
+            ax2 = f.add_subplot(312, ylabel="slope adjusted")
+            ax3 = f.add_subplot(313, ylabel="realigned to maximum")
 
             ax1.imshow(data)
-            ax2.imshow(aligned_data)
+            ax2.imshow(slope_adjusted_data)
+            ax3.imshow(aligned_data)
 
         elif graph_type == "Aligned Crosssection":
-            data = [sample.get_realigned_crossection() for sample in samples]
+            data = [sample.get_realigned_crosssection() for sample in samples]
 
             f.clear()
 
@@ -386,12 +431,15 @@ class GraphWindow:
             a.set_xlabel("Pixel from Centre")
 
             for d, t in zip(data, self.title):
-                if normalize: d = d / np.max(d)
+                if normalize:
+                    graph_max = np.max(d)
+                    d = d / graph_max
                 offset = list(d).index(max(d))
                 a.plot(np.array([i for i in range(len(d))]) - offset, d, label=t)
 
             if len(data) == 1:
                 fwhm, height, lo, hi = samples[0].get_realigned_fwhm()
+                if normalize: height /= graph_max
                 a.hlines(height, lo, hi, label=f"FWHM = {fwhm}", color="C2", linestyles="dotted")
 
             a.legend(bbox_to_anchor=(1, 1), loc="upper left")
@@ -404,8 +452,11 @@ class GraphWindow:
             f.clear()
 
             a = f.add_subplot(111, frameon=False)
-            a.set_ylabel("Fit")
+            a.set_ylabel("Amplitude")
             a.set_xlabel("Frequency")
+
+            a.set_xscale("log")
+            a.set_yscale("log")
 
             for d, t in zip(data, self.title):
                 a.plot(axis_x, d, label=t)
@@ -420,8 +471,11 @@ class GraphWindow:
             f.clear()
 
             a = f.add_subplot(111, frameon=False)
-            a.set_ylabel("Fit")
+            a.set_ylabel("Amplitude")
             a.set_xlabel("Frequency")
+
+            a.set_xscale("log")
+            a.set_yscale("log")
 
             for d, t in zip(data, self.title):
                 a.plot(axis_x, d, label=t)
@@ -440,6 +494,75 @@ class GraphWindow:
 
             for d, t in zip(data, self.title):
                 a.plot(axis_x, d, label=t)
+
+            a.legend(bbox_to_anchor=(1, 1), loc="upper left")
+
+        elif graph_type == "Slope adjusted Crosssection":
+            data = [sample.get_slope_adjusted_crosssection() for sample in samples]
+
+            f.clear()
+
+            a = f.add_subplot(111, frameon=False)
+
+            if not self.normalize.get():
+                a.set_ylabel("ADUs")
+            else:
+                a.set_ylabel("Relative ADUs")
+            a.set_xlabel("Pixel from Centre")
+
+            for d, t in zip(data, self.title):
+                if normalize:
+                    graph_max = np.max(d)
+                    d = d / graph_max
+                offset = list(d).index(max(d))
+                a.plot(np.array([i for i in range(len(d))]) - offset, d, label=t)
+
+            if len(data) == 1:
+                fwhm, height, lo, hi = samples[0].get_slope_adjusted_fwhm()
+                if normalize: height /= graph_max
+                a.hlines(height, lo, hi, label=f"FWHM = {fwhm}", color="C2", linestyles="dotted")
+
+            a.legend(bbox_to_anchor=(1, 1), loc="upper left")
+
+        elif graph_type == "Binary Star Separation":
+            crosssection = samples[0].get_realigned_crosssection()
+            fwhm = self.custom_fwhm.get()
+
+            max_val = np.max(crosssection)
+
+            x_val = np.arange(len(crosssection)) - list(crosssection).index(max_val)
+
+            mu = 0
+            sigma = fwhm / (2*np.sqrt(2*np.log(2)))
+
+            if normalize:
+                max_val = 1
+                crosssection /= max_val
+
+            f.clear()
+
+            a = f.add_subplot(111, frameon=False)
+
+            aprox = norm.pdf(x_val, mu, sigma)
+
+            aprox = aprox * (1/np.max(aprox)) * max_val
+
+            a.plot(x_val, crosssection, "C1", label="Raw Data")
+            a.plot(x_val, aprox, "C2", label="Star 1")
+
+            remainder = crosssection - aprox
+
+            mu_remainder = list(remainder).index(np.max(remainder)) - list(crosssection).index(np.max(crosssection))
+
+            aprox_remainder = norm.pdf(x_val, mu_remainder, sigma)
+
+            aprox_remainder = aprox_remainder * (1/np.max(aprox_remainder)) * np.max(remainder)
+
+            a.plot(x_val, aprox_remainder, "C4", label="Star 2")
+
+            remainder_2 = remainder - aprox_remainder
+
+            a.plot(x_val, remainder_2, "C3--", label=f"Error: {np.std(remainder_2)}")
 
             a.legend(bbox_to_anchor=(1, 1), loc="upper left")
 

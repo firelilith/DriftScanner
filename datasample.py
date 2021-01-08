@@ -26,6 +26,8 @@ class DataSample:
 
         self.meta_info = meta_info
 
+        self.interval_time = 1
+
         # print(self.background1, self.background2, self._background_avg())
         # print(self.data_raw, self.data)
         # print(self.signal_raw, self.signal, self.snr)
@@ -95,6 +97,13 @@ class DataSample:
         subarr = self.data[:, start:stop]
         return np.sum(subarr)
 
+    def delta_pix(self, time=None):        # Calculates the appropriate pixel interval width for a given time interval based on the declination
+        if not time:
+            time = self.interval_time
+        v_drift = 1 / self.meta_info["time_per_pix"]
+        print(v_drift)
+        return int(abs(v_drift * time))
+
     def get_snr(self, start=0, stop=0, readout_time=25, readout_dev=0):
         start, stop = self._adjust_bounds(start, stop)
 
@@ -149,7 +158,10 @@ class DataSample:
 
         return np.std(self.get_flattened_line(start, stop))
 
-    def get_flattened_moving_average(self, interval=1, start=0, stop=0):
+    def get_flattened_moving_average(self, interval=None, start=0, stop=0):
+        if not interval:
+            interval = self.delta_pix(time=self.interval_time)
+
         start, stop = self._adjust_bounds(start, stop)
 
         line = self.get_flattened_line(start, stop)
@@ -160,8 +172,11 @@ class DataSample:
 
         return np.array(mvg_avg)
 
-    def get_moving_stddev_from_SNR(self, interval, start=0, stop=0):
+    def get_moving_stddev_from_SNR(self, interval=None, start=0, stop=0):
         start, stop = self._adjust_bounds(start, stop)
+
+        if not interval:
+            interval = self.delta_pix(time=self.interval_time)
 
         stddev = []
         for i in range(stop - start - interval):
@@ -169,8 +184,11 @@ class DataSample:
 
         return np.array(stddev)
 
-    def get_moving_stddev_from_numbers(self, interval, start=0, stop=0):
+    def get_moving_stddev_from_numbers(self, interval=None, start=0, stop=0):
         start, stop = self._adjust_bounds(start, stop)
+
+        if not interval:
+            interval = self.delta_pix(time=self.interval_time)
 
         data = self.get_flattened_line(start, stop)
 
@@ -192,20 +210,30 @@ class DataSample:
         data = self.data[:, start:stop].T.copy()
         middle = len(self.data) // 2
 
+        prev = None
+
         for column in range(len(data)):
             max = 0
             maxi = 0
-            for i in range(len(data[column]) - vertical_interval):
+
+            if not prev:
+                shifts = range(len(data[column]) - vertical_interval)
+            else:
+                shifts = range(prev - 1 - vertical_interval, prev + 1)
+
+            for i in shifts:
                 if np.sum(data[column, i:i+vertical_interval]) > max:
                     max = np.sum(data[column, i:i+vertical_interval])
                     maxi = i + vertical_interval // 2
+
+            prev = maxi
 
             if middle-maxi != 0:
                 data[column] = _shift(data[column], middle - maxi)
 
         return data.T
 
-    def get_realigned_crossection(self, vertical_interval=5, start=0, stop=0):
+    def get_realigned_crosssection(self, vertical_interval=5, start=0, stop=0):
         start, stop = self._adjust_bounds(start, stop)
 
         return np.sum(self.get_realigned_to_maximum(vertical_interval=vertical_interval, start=start, stop=stop), axis=1)
@@ -246,7 +274,7 @@ class DataSample:
 
         start, stop = self._adjust_bounds(start, stop)
 
-        data = self.get_realigned_crossection(start=start, stop=stop)
+        data = self.get_realigned_crosssection(start=start, stop=stop)
 
         maximum = np.max(data)
 
@@ -288,8 +316,11 @@ class DataSample:
 
         return max_positions
 
-    def get_maximum_shift_moving_average(self, interval=1, vertical_interval=5, start=0, stop=0):
+    def get_maximum_shift_moving_average(self, interval=None, vertical_interval=5, start=0, stop=0):
         start, stop = self._adjust_bounds(start, stop)
+
+        if not interval:
+            interval = self.delta_pix(time=self.interval_time)
 
         max_shift = self.get_maximum_shift(vertical_interval=vertical_interval, start=start, stop=stop)
 
@@ -297,7 +328,7 @@ class DataSample:
 
         return np.array(avg)
 
-    def get_t_s_fourier(self, interval=1, start=0, stop=0):
+    def get_t_s_fourier(self, interval=None, start=0, stop=0):
         start, stop = self._adjust_bounds(start, stop)
 
         data = self.get_flattened_moving_average(interval, start, stop)
@@ -306,8 +337,11 @@ class DataSample:
 
         return np.abs(fourier)
 
-    def get_t_y_fourier(self, interval=1, start=0, stop=0):
+    def get_t_y_fourier(self, interval=None, start=0, stop=0):
         start, stop = self._adjust_bounds(start, stop)
+
+        if not interval:
+            interval = self.delta_pix(time=self.interval_time)
 
         data = self.get_maximum_shift_moving_average(interval=interval, vertical_interval=5, start=start, stop=stop)
 
@@ -315,8 +349,11 @@ class DataSample:
 
         return np.abs(fourier)
 
-    def get_slope_adjusted_t_y(self, interval=1, start=0, stop=0):
+    def get_slope_adjusted_t_y(self, interval=None, start=0, stop=0):
         start, stop = self._adjust_bounds(start, stop)
+
+        if not interval:
+            interval = self.delta_pix(time=self.interval_time)
 
         data = self.get_maximum_shift_moving_average(interval=interval, start=start, stop=stop)
 
@@ -327,3 +364,63 @@ class DataSample:
         fitted = np.poly1d(regression_coef)(data_x)
 
         return data - fitted
+
+    def get_slope_adjusted_data(self, start=0, stop=0):
+        def _shift(col, n):
+            if n > 0:
+                return np.concatenate((np.full(n, 0), col[:-n]))
+            elif n < 0:
+                return np.concatenate((col[-n:], np.full(-n, 0)))
+            else:
+                return col
+
+        start, stop = self._adjust_bounds(start, stop)
+
+        data = self.data[start:stop].T.copy()
+
+        shift_data = self.get_maximum_shift_moving_average(start=start, stop=stop)
+
+        data_x = np.arange(len(shift_data))
+
+        regression_coef = np.polyfit(data_x - len(data) // 2, shift_data, 1)
+
+        realignment_values = np.poly1d(regression_coef)(data_x)
+
+        for i in range(len(realignment_values)):
+            data[i] = _shift(data[i], int(realignment_values[i]))
+
+        return data.T
+
+    def get_slope_adjusted_crosssection(self, start=0, stop=0):
+        start, stop = self._adjust_bounds(start, stop)
+
+        return np.sum(self.get_slope_adjusted_data(start=start, stop=stop), axis=1)
+
+    def get_slope_adjusted_fwhm(self, start=0, stop=0):
+        def get_interpolated(y, lo, hi):
+            return (y - lo) / (hi - lo)
+
+        start, stop = self._adjust_bounds(start, stop)
+
+        data = self.get_slope_adjusted_crosssection(start=start, stop=stop)
+
+        maximum = np.max(data)
+
+        pos_max = list(data).index(maximum)
+
+        lo, hi = pos_max, pos_max
+
+        for i in range(pos_max, 0, -1):
+            if data[i] < maximum / 2:
+                lo = i
+                break
+
+        for i in range(pos_max, len(data) - 1):
+            if data[i + 1] < maximum / 2:
+                hi = i
+                break
+
+        lo += get_interpolated(maximum / 2, data[lo], data[lo+1]) - pos_max
+        hi += get_interpolated(maximum / 2, data[hi], data[hi+1]) - pos_max
+
+        return hi - lo, maximum / 2, lo, hi
