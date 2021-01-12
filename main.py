@@ -131,17 +131,11 @@ class App:
         self.viewmenu_brightness.add_command(label="Squareroot", command=self._view_sqrt)
         self.viewmenu_brightness.add_command(label="log", command=self._view_log)
 
-        self.viewmenu_zoom = tk.Menu(self.viewmenu, tearoff=0)  # zoom image (slow and memory intensive, TODO: look for better way, maybe?)
-        self.viewmenu_zoom.add_command(label="1x", command=self._zoom1)
-        self.viewmenu_zoom.add_command(label="2x", command=self._zoom2)
-        self.viewmenu_zoom.add_command(label="4x", command=self._zoom4)
-
         self.viewmenu_clear = tk.Menu(self.viewmenu, tearoff=0)
         self.viewmenu_clear.add_command(label="Clear last", command=self.graphics_clear_last)
         self.viewmenu_clear.add_command(label="Clear all", command=self.graphics_clear_all)
 
         self.viewmenu.add_cascade(label="Brightness", menu=self.viewmenu_brightness)
-        self.viewmenu.add_cascade(label="Zoom", menu=self.viewmenu_zoom)
         self.viewmenu.add_cascade(label="Clear Graphics", menu=self.viewmenu_clear)
         self.viewmenu.add_command(label="Label", command=self.graphics_create_label)
         self.viewmenu.add_command(label="Clear labels", command=self.graphics_clear_labels)
@@ -513,15 +507,6 @@ class App:
     def _view_log(self):
         self.image_mode = "log"
         self.display_image()
-
-    def _zoom1(self):
-        self.display_image(zoom=1)
-
-    def _zoom2(self):
-        self.display_image(zoom=2)
-
-    def _zoom4(self):
-        self.display_image(zoom=4)
 
     def _transform_m_x(self):
         self.working_data = np.flipud(self.working_data)

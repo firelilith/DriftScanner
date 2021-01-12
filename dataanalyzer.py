@@ -8,6 +8,7 @@ import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from scipy.stats import norm
+from scipy import optimize
 from datasample import DataSample
 matplotlib.use("TkAgg")
 
@@ -27,6 +28,8 @@ class DataAnalyzer:
         # Open data windows
 
         self.open_windows = []
+
+        self.psf = None
 
         # File Menubar
         """
@@ -60,7 +63,7 @@ class DataAnalyzer:
                                   ((self.f_show_maximum_wobble, "t-Y-Graph"), (self.f_slope_adjusted_t_y, "Slope adjusted t-Y-Graph")),
                                   ((self.f_show_flattened_line, "t-S-Graph"), (self.f_show_line_fit, "Get average line")),
                                   ((self.f_t_s_fourier, "t-S-Fourier"), (self.f_t_y_fourier, "t-Y-Fourier")),
-                                  ((self.f_vertical_align, "Vertical align"), (self.f_binary_star_separation, "Binary Star Separation")))
+                                  ((self.f_vertical_align, "Vertical align"), (self.f_set_psf, "Get PSF from Single Stars"), (self.f_binary_star_separation, "Binary Star Separation")))
 
         self.top_frame = tk.Frame(master=self.window)
         self.top_frame.pack(expand=False, fill=tk.X)
@@ -172,6 +175,25 @@ class DataAnalyzer:
         samples = self._get_selected()
         title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
         self.open_windows.append(GraphWindow(self, samples, "Slope adjusted Crosssection", title))
+
+    def f_set_psf(self):
+        samples = self._get_selected()
+        title = [self.datasheet.item(iid)["values"][0] for iid in self.datasheet.selection()]
+
+        crosssections = np.array([(cross := sample.get_realigned_crosssection()) / np.max(cross) for sample in samples])
+        median_cross = np.mean(crosssections, axis=0)
+
+        #res = []
+        #for i in range(len(median_cross) - 4):
+        #    res.append(np.mean(median_cross[i:i+4]))
+#
+        #res = np.array([0, 0] + res + [0, 0])
+        #res /= np.max(res)
+
+        self.psf = median_cross # res
+
+        self.open_windows.append(GraphWindow(self, samples, "Get PSF from Single Stars", title))
+
 
     def f_binary_star_separation(self):
         s = self.datasheet.focus()
@@ -292,6 +314,7 @@ class GraphWindow:
         self.normalize = tk.BooleanVar()
         self.interval = tk.IntVar()
         self.custom_fwhm = tk.DoubleVar()
+        self.custom_mu2 = tk.DoubleVar()
 
         self.frame = tk.Frame(self.window)
         self.frame.pack(expand=False, side=tk.TOP, fill=tk.X)
@@ -308,16 +331,19 @@ class GraphWindow:
 
             self.slider.set(self.samples[0].delta_pix())
 
-        if graph_type == "Binary Star Separation":
-            self.slider = tk.Scale(self.frame, from_=0, to=samples[0].get_realigned_fwhm()[0] * 2, resolution=0.01 , orient=tk.HORIZONTAL, variable=self.custom_fwhm, label="FWHM")
-            self.slider.set(samples[0].get_realigned_fwhm()[0])
-            self.slider.bind("<ButtonRelease-1>", lambda x: self._redraw())
-            self.slider.pack(fill=tk.BOTH, expand=True)
-
-        if graph_type in ("t-S-Graph", "Raw Crosssection", "Aligned Crosssection", "Slope adjusted Crosssection"):
+        if graph_type in ("t-S-Graph", "Raw Crosssection", "Aligned Crosssection", "Slope adjusted Crosssection", "Binary Star Separation"):
             self.normalize_check = tk.Checkbutton(self.frame, variable=self.normalize, offvalue=False, onvalue=True, text="Normalize", command=self._redraw)
 
             self.normalize_check.pack(side=tk.LEFT)
+
+        if graph_type == "Binary Star Separation":
+            self.slider = tk.Scale(self.frame, resolution=0.01, from_=1, to=max(len(sample.data) for sample in samples) // 2, orient=tk.HORIZONTAL, variable=self.custom_fwhm, label="FWHM")
+            self.slider.bind("<ButtonRelease-1>", lambda x: self._redraw())
+            self.slider.pack(fill=tk.BOTH, expand=True)
+
+            self.slider = tk.Scale(self.frame, resolution=0.01, from_=-1, to=1 , orient=tk.HORIZONTAL, variable=self.custom_mu2, label="mu2")
+            self.slider.bind("<ButtonRelease-1>", lambda x: self._redraw())
+            self.slider.pack(fill=tk.BOTH, expand=True)
 
         self.draw_figure(self.f, samples, graph_type, interval=self.samples[0].delta_pix())
 
@@ -524,6 +550,15 @@ class GraphWindow:
 
             a.legend(bbox_to_anchor=(1, 1), loc="upper left")
 
+        elif graph_type == "Get PSF from Single Stars":
+            crosssection = self.parent.psf
+
+            a = f.add_subplot(111, frameon=False)
+
+            a.set_xlabel("Pixel from Max")
+
+            a.plot(np.arange(len(crosssection)) - list(crosssection).index(np.max(crosssection)), crosssection)
+
         elif graph_type == "Binary Star Separation":
             crosssection = samples[0].get_realigned_crosssection()
             fwhm = self.custom_fwhm.get()
@@ -532,42 +567,128 @@ class GraphWindow:
 
             x_val = np.arange(len(crosssection)) - list(crosssection).index(max_val)
 
-            mu = 0
-            sigma = fwhm / (2*np.sqrt(2*np.log(2)))
-
             if normalize:
-                max_val = 1
                 crosssection /= max_val
+                max_val = 1
 
             f.clear()
 
             a = f.add_subplot(111, frameon=False)
 
-            aprox = norm.pdf(x_val, mu, sigma)
+            # psf approach
+            """
+            data_psf = self.parent.psf
+
+            def psf(x):
+                # get continuous psf through interpolation
+
+                def get_interpolated(x, lo, hi):
+                    x = x - int(x)
+                    return lo + (hi-lo) * x
+
+                x_pos = x - int(x)
+                lo = data_psf[int(np.floor(x))]
+                hi = data_psf[int(np.ceil(x))]
+
+                return get_interpolated(x_pos, lo, hi)
+
+            def star_from_psf(x_values, max_pos, max_height):
+                if len(x_values) != len(data_psf):
+                    raise ValueError(f"PSF not fit for Aperture of width {len(x_val)}")
+
+                star = np.zeros(len(crosssection))
+
+                for i in range(len(crosssection)):
+                    if 0 <= i - max_pos <= len(crosssection) - 1:
+                        star[i] = psf(i - max_pos) * max_height
+
+                return star
+
+            def two_stars(x_values, max_pos2, max_height2):
+                return star_from_psf(x_values, 0, max_val) + star_from_psf(x_values, max_pos2, max_height2)
+
+            (mp2, mh2), fitness = optimize.curve_fit(two_stars, x_val, crosssection, bounds=[[-np.inf, 0], [np.inf, np.inf]], p0=[10, 1000000])
+
+            mp1 = 0
+            mh1 = max_val
+
+            a.plot(x_val, crosssection, label="Raw")
+            a.plot(x_val, star_from_psf(x_val, mp1, mh1), label=f"Star 1: {(star1 := np.sum(star_from_psf(x_val, mp1, mh1)))}, X: {mp1}")
+            a.plot(x_val, star_from_psf(x_val, mp2, mh2), label=f"Star 2: {(star2 := np.sum(star_from_psf(x_val, mp2, mh2)))}, X: {mp2}")
+            error = crosssection - star_from_psf(x_val, mp1, mh1) - star_from_psf(x_val, mp2, mh2)
+            a.plot(x_val, error, label=f"Error: {np.std(error)}\nMag difference: {abs(np.log(star1) / np.log(100**.2) - np.log(star2) / np.log(100**.2))}")
+            """
+
+            # gaussian approach
+            """
+            def gaussian(x, max_value, mu, sigma):
+                res = norm.pdf(x, mu, sigma)
+                res = res * (1 / np.max(res)) * max_value
+                return res
+
+            def two_gaussians(x, max2, mu2, sigma):
+                mu1 = 0
+                max1 = max_val
+                return gaussian(x, max1, mu1, sigma) + gaussian(x, max2, mu2, sigma)
+
+            def get_error(params):
+                print(params[0])
+                e = np.std(two_gaussians(x_val, *params) - crosssection)
+                return e
+
+            #(max2, mu2, sigma), stats = optimize.curve_fit(two_gaussians, x_val, crosssection , bounds=([150000, x_val[0], 0], [np.inf, x_val[-1], np.inf]), p0=[max_val, 1, 1])
+            (max2, mu2, sigma) = optimize.brute(get_error,
+                                                [(0, max_val / 4), (0, 15), (0, 10)],
+                                                Ns=30,
+                                                finish=None)
+
+            print(max2, mu2, sigma)
+
+            mu1 = 0
+            max1 = max_val
+
+            gauss1 = gaussian(x_val, max1, mu1, sigma)
+            gauss2 = gaussian(x_val, max2, mu2, sigma)
+
+            error = crosssection - two_gaussians(x_val, max2, mu2, sigma)
+
+            a.plot(x_val, crosssection, label="Raw Data")
+            a.plot(x_val, gauss1, "--", label=f"Star 1: S = {np.sum(gauss1)}, mu = {mu1}")
+            a.plot(x_val, gauss2, "--", label=f"Star 2: S = {np.sum(gauss2)}, mu = {mu2}")
+            a.plot(x_val, error, ":", label=f"Standard Error = {np.std(error)}\nMag difference: {abs(np.log(np.sum(gauss1)) / np.log(100**.2) - np.log(np.sum(gauss2)) / np.log(100**.2))}")
+            """
+
+            # Manual approach
+            star1_mu = 0
+            star1_sigma = fwhm / (2*np.sqrt(2*np.log(2)))
+
+            aprox = norm.pdf(x_val, star1_mu, star1_sigma)
 
             aprox = aprox * (1/np.max(aprox)) * max_val
 
-            a.plot(x_val, crosssection, "C1", label="Raw Data")
-            a.plot(x_val, aprox, "C2", label="Star 1")
+            a.plot(x_val, aprox, "--", label=f"Star 1: S = {np.sum(aprox):.2f}, mu = {star1_mu}")
 
             remainder = crosssection - aprox
 
-            mu_remainder = list(remainder).index(np.max(remainder)) - list(crosssection).index(np.max(crosssection))
+            mu_remainder = list(remainder).index(np.max(remainder)) - list(crosssection).index(np.max(crosssection)) + self.custom_mu2.get()
 
-            aprox_remainder = norm.pdf(x_val, mu_remainder, sigma)
+            aprox_remainder = norm.pdf(x_val, mu_remainder, star1_sigma)
 
             aprox_remainder = aprox_remainder * (1/np.max(aprox_remainder)) * np.max(remainder)
 
-            a.plot(x_val, aprox_remainder, "C4", label="Star 2")
+            a.plot(x_val, aprox_remainder, "--", label=f"Star 2: S = {np.sum(aprox_remainder):.2f}, mu = {list(aprox_remainder).index(max(aprox_remainder)) - list(crosssection).index(max_val) + self.custom_mu2.get()}")
 
             remainder_2 = remainder - aprox_remainder
 
-            a.plot(x_val, remainder_2, "C3--", label=f"Error: {np.std(remainder_2)}")
+            a.plot(x_val, remainder_2, "r:", label=f"Error: {np.std(remainder_2):.4f}")
+
+            #
+            a.plot(x_val, crosssection, "+-", label=f"Raw Data\nMagnitude Difference: {abs(np.log(np.sum(aprox)) / np.log(100**.2) - np.log(np.sum(aprox_remainder)) / np.log(100**.2))}", alpha=.5)
 
             a.legend(bbox_to_anchor=(1, 1), loc="upper left")
 
         else:
-            raise ValueError
+            raise ValueError(f"Invalid Mode: {graph_type}")
 
         if self.canvas:
             self.canvas.get_tk_widget().destroy()
