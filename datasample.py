@@ -431,3 +431,26 @@ class DataSample:
         hi += get_interpolated(maximum / 2, data[hi], data[hi+1]) - pos_max
 
         return hi - lo, maximum / 2, lo, hi
+
+
+  def get_luminosity(start=0, stop=0):
+    start, stop, _ = self._adjust_bounds(start, stop)
+
+    luminosity = np.sum(self.data) / (len(self.data[0]) * self.time_per_pix)
+
+    return luminosity, luminosity / self.snr
+
+  def get_realigned_luminosity(fwhm_amount=3, start=0, stop=0):
+    start, stop, _ = self._adjust_bounds(start, stop)
+    
+    data = get_realigned_crosssection(start, stop)
+
+    fwhm = self.get_realigned_fwhm(start, stop)
+
+    max_pos = list(data).index(np.max(data))
+
+    cutout = max_pos - fwhm / 2 * fwhm_amount, max_pos + fwhm / 2 * fwhm_amount
+
+    luminosity = np.sum(data[cutout]) / (len(self.data[0]) * self.time_per_pix)
+
+    return luminosity, luminosity / self.get_realigned_snr(fwhm_amount, start, stop)
