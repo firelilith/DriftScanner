@@ -111,12 +111,9 @@ class DataSample:
         v_drift = 1 / self.meta_info["time_per_pix"] if self.meta_info["time_per_pix"] else 1
         return int(abs(v_drift * time))
 
-    def get_snr(self, start=0, stop=0, readout_time=25, readout_dev=0):
-        start, stop, _ = self._adjust_bounds(start, stop)
 
-        signal = self._signal_background(start=start, stop=stop)
-
-        if self.background1.shape == self.background2.shape:
+    def get_background_dev():
+      if self.background1.shape == self.background2.shape:
             bg = np.array((self.background1[:, start:stop], self.background2[:, start:stop]))
         else:
             if sum(self.background1.shape) > sum(self.background2.shape):
@@ -124,7 +121,15 @@ class DataSample:
             else:
                 bg = self.background2
 
-        background_dev = np.std(bg)
+        return np.std(bg)
+
+
+    def get_snr(self, start=0, stop=0, readout_time=25, readout_dev=0):
+        start, stop, _ = self._adjust_bounds(start, stop)
+
+        signal = self._signal_background(start=start, stop=stop)
+
+        background_dev = self-get_background_dev()
 
         time = self.time_per_pix * (stop - start)
 
@@ -440,6 +445,7 @@ class DataSample:
 
     return luminosity, luminosity / self.snr
 
+
   def get_realigned_luminosity(fwhm_amount=3, start=0, stop=0):
     start, stop, _ = self._adjust_bounds(start, stop)
     
@@ -454,3 +460,28 @@ class DataSample:
     luminosity = np.sum(data[cutout]) / (len(self.data[0]) * self.time_per_pix)
 
     return luminosity, luminosity / self.get_realigned_snr(fwhm_amount, start, stop)
+
+
+  def get_realigned_snr(fwhm_amount=2.5, start=0, stop=0):
+    start, stop, _ = self._adjust_bounds(start, stop)
+
+    data = self.get_realigned_crosssection(start, stop)
+
+    max_pos = list(data).index(np.max(data))
+
+    cutout = max_pos - fwhm / 2 * fwhm_amount, max_pos + fwhm / 2 * fwhm_amount
+
+    signal = np.sum(data[cutout])
+
+    background_dev = self.get_background_dev()
+
+    time = self.time_per_pix * (stop - start)
+
+        pixel_count = np.size(self.data, 0) * (stop - start)
+
+        snr = signal / np.sqrt(signal + time * pixel_count * (background_dev + self.readout_dev**2))
+
+        return snr
+
+    return snr
+
